@@ -1,0 +1,34 @@
+# Rust / Cargo build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+.DS_Store
+
+# Plan-task workspace scratch (ephemeral scratchpads)
+.specs/scratchpad/
+
+# Local config / secrets
+.env
+.env.local
+
+# Fuzzing corpus (regenerable)
+fuzz/
+**/fuzz/artifacts/
+
+# Coverage / profdata
+*.profraw
+*.profdata
+coverage/
+
+# Build output of any local tooling (Flatpak build dirs are gitignored too)
+build-dir/
+.flatpak-builder/
+.flatpak/

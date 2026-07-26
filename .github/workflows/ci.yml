@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install GTK4/libadwaita dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libgtksourceview-5-dev \
+            xvfb \
+            pkg-config \
+            build-essential
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt check
+        run: cargo fmt --all -- --check
+      - name: clippy (deny warnings)
+        run: cargo clippy --all-targets --features gtk -- -D warnings
+
+  audit:
+    name: Supply Chain Audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
+
+  test:
+    name: Tests (Debug)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install GTK4/libadwaita dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libgtksourceview-5-dev \
+            xvfb \
+            pkg-config \
+            build-essential
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests (no GTK)
+        run: cargo nextest run --no-default-features
+      - name: Integration tests (xvfb)
+        run: xvfb-run -a cargo nextest run --features gtk --no-fail-fast
+
+  proptest:
+    name: Property Tests (Release)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install GTK4/libadwaita dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libgtksourceview-5-dev \
+            xvfb \
+            pkg-config \
+            build-essential
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Property tests with PROPTEST_CASES=2000
+        env:
+          PROPTEST_CASES: "2000"
+        run: xvfb-run -a cargo nextest run --features gtk --release
+
+  fuzz:
+    name: Fuzz (kdl_parser)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install GTK4/libadwaita dev packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libgtksourceview-5-dev \
+            pkg-config \
+            build-essential
+      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+      - name: Run cargo fuzz on kdl_parser (30s budget)
+        # Fails until fuzz/fuzz_targets/kdl_parser.rs is committed; this enforces Step 19/21 of the spec.
+        run: cargo +nightly fuzz run kdl_parser -- -max_total_time=30
