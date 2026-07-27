@@ -15,7 +15,7 @@
 #![cfg(feature = "gtk")]
 
 use gtk4::pango;
-use gtk4::prelude::TextTagExt;
+use gtk4::prelude::*;
 use gtk4::TextBuffer;
 
 // ---- Token recogniser ----
@@ -196,7 +196,7 @@ struct HighlightTags {
 impl HighlightTags {
     fn new(buffer: &TextBuffer) -> Self {
         fn make_tag(buf: &TextBuffer, name: &str) -> gtk4::TextTag {
-            buf.create_tag(Some(name))
+            buf.create_tag(Some(name), &[]).expect("create_tag failed")
         }
 
         let mut tags = Self {
@@ -211,7 +211,8 @@ impl HighlightTags {
         tags.comment.set_style(pango::Style::Italic);
 
         tags.keyword.set_foreground(Some("#569cd6"));
-        tags.keyword.set_weight(pango::Weight::Bold);
+        // set_weight takes i32 (Pango weight value, 700 = Bold).
+        tags.keyword.set_weight(700);
 
         tags.string.set_foreground(Some("#ce9178"));
 

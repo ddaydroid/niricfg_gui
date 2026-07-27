@@ -58,9 +58,9 @@ use std::time::Duration;
 
 // Re-export libadwaita under the shorter `adw` name used throughout
 // this module (the underlying crate is `libadwaita` in 0.7.x).
-use libadwaita as adw;
-
+use gtk4::pango;
 use gtk4::prelude::*;
+use libadwaita as adw;
 
 use crate::core::diff::line_diff;
 use crate::core::error::Error;
@@ -104,7 +104,10 @@ struct TabDiffState {
 fn build_diff_editor_side() -> (gtk4::Box, gtk4::TextView, gtk4::Label) {
     // --- Line number gutter label ---
     let line_label = gtk4::Label::new(None);
-    line_label.set_monospace(true);
+    // set_monospace is not available on Label in gtk4 0.9.x;
+    // use font description to achieve the same effect.
+    let font_desc = pango::FontDescription::from_string("monospace");
+    line_label.set_font_desc(Some(&font_desc));
     line_label.set_xalign(1.0);
     line_label.set_valign(gtk4::Align::Start);
     line_label.set_margin_start(4);
@@ -195,7 +198,7 @@ fn build_diff_widget() -> DiffWidget {
 
     // --- Colour tags ---
     fn make_diff_tag(buf: &gtk4::TextBuffer, name: &str, bg: &str, fg: &str) -> gtk4::TextTag {
-        let tag = buf.create_tag(Some(name));
+        let tag = buf.create_tag(Some(name), &[]).expect("create_tag failed");
         tag.set_background(Some(bg));
         tag.set_foreground(Some(fg));
         tag
