@@ -1,0 +1,42 @@
+// Niri config with abundant comments.
+// This file exercises comment-preservation in the round-trip.
+
+// --- Input section ---
+input {
+    // Keyboard settings
+    keyboard {
+        repeat-delay 250  // milliseconds before repeat starts
+        repeat-rate 33    /* key presses per second */
+    }
+    /* Touchpad section:
+       Settings for built-in touchpad */
+    touchpad {
+        tap-to-click "true"  /* enable tap to click */
+        natural-scroll "true"
+    }
+}
+
+/*
+ * Layout section
+ * Controls window gaps, borders, and focus rings
+ */
+layout {
+    gap 8
+    // Focus ring appearance
+    focus-ring {
+        width 2
+        active-color "#5294e2"
+    }
+}
+
+// Keybindings
+binds {
+    // Launch terminal
+    Mod+Return spawn "foot"
+    // Close focused window
+    Mod+Q close-window
+    /* Workspace navigation */
+    Mod+1 focus-workspace 1
+    Mod+2 focus-workspace 2
+    Mod+3 focus-workspace 3
+}

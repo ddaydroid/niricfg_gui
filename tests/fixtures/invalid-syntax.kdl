@@ -1,0 +1,11 @@
+// Intentionally malformed KDL — should fail to parse.
+binds {
+    Mod+Q close-window
+    Mod+Return spawn "foot"
+// Missing closing brace
+
+input {
+    keyboard
+        repeat-delay 250
+// Missing opening/closing braces — invalid nesting
+}

@@ -1,0 +1,59 @@
+// Typical niri config used in integration tests.
+input {
+    keyboard {
+        repeat-delay 250
+        repeat-rate 33
+        xkb-layout "us"
+    }
+    touchpad {
+        tap-to-click "true"
+        natural-scroll "true"
+        tap-and-drag "true"
+    }
+}
+
+output "eDP-1" {
+    scale 1.5
+}
+
+layout {
+    gap 8
+    focus-ring {
+        width 2
+        active-color "#5294e2"
+        off-color "#cccccc"
+    }
+    border {
+        width 1
+        active-color "#5294e2"
+    }
+}
+
+spawn-at-startup "/usr/libexec/polkit-gnome-authentication-agent-1"
+spawn-at-startup "waybar"
+
+binds {
+    Mod+Return spawn "foot"
+    Mod+Q close-window
+    Mod+T toggle-floating
+    Mod+Shift+F switch-focus-between-floating-and-tiling
+    Mod+Shift+Left focus-column-left
+    Mod+Shift+Right focus-column-right
+    Mod+1 focus-workspace 1
+    Mod+2 focus-workspace 2
+    Mod+3 focus-workspace 3
+    Mod+4 focus-workspace 4
+    Mod+5 focus-workspace 5
+    Mod+Shift+1 move-column-to-workspace 1
+    Mod+Shift+2 move-column-to-workspace 2
+    Mod+Shift+3 move-column-to-workspace 3
+    Mod+Shift+4 move-column-to-workspace 4
+    Mod+Shift+5 move-column-to-workspace 5
+    Mod+Shift+Left move-column-left
+    Mod+Shift+Right move-column-right
+}
+
+window-rules {
+    match app-id="firefox" open-maximized "true"
+    match app-id="Alacritty" open-int "column" default-column-width { proportion 0.5 }
+}

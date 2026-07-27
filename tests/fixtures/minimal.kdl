@@ -1,0 +1,4 @@
+// Minimal niri config — one bind, nothing else.
+binds {
+    Mod+Return spawn "foot"
+}

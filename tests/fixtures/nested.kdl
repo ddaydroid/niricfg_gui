@@ -1,0 +1,97 @@
+// Deeply nested config — exercises recursive node walking and semantic paths.
+input {
+    keyboard {
+        xkb {
+            layout "us,ru"
+            variant ",winkeys"
+            options "grp:alt_shift_toggle"
+            repeat-delay 250
+            repeat-rate 33
+        }
+    }
+    touchpad {
+        tap {
+            to-click "true"
+            to-drag "true"
+            to-drag-lock "false"
+        }
+        scroll {
+            natural "true"
+            speed 0.5
+            two-finger {
+                enabled "true"
+            }
+        }
+    }
+}
+
+output "eDP-1" {
+    mode "1920x1080@144"
+    scale 1.25
+    position {
+        x 0
+        y 0
+    }
+    background {
+        path "/usr/share/wallpapers/default.png"
+        color "#1a1a2e"
+        fill "stretch"
+    }
+}
+
+output "HDMI-A-1" {
+    mode "2560x1440@60"
+    scale 1.0
+    position {
+        x 1920
+        y 0
+    }
+}
+
+layout {
+    gap 8
+    focus-ring {
+        width 2
+        active-color "#5294e2"
+        off-color "#333333"
+    }
+    border {
+        enable {
+            always "true"
+            fullscreen "false"
+            overlap {
+                top "true"
+                bottom "true"
+                left "true"
+                right "true"
+            }
+        }
+        width 1
+        active-color "#5294e2"
+        inactive-color "#555555"
+    }
+    strut {  // Strut section with no properties
+    }
+}
+
+preferred-workspace-for-output "eDP-1" 1
+preferred-workspace-for-output "HDMI-A-1" 2
+
+binds {
+    Mod+Return spawn "foot"
+    Mod+Q close-window
+    Mod+Shift+E exit
+    Mod+1 focus-workspace 1
+    Mod+2 focus-workspace 2
+}
+
+window-rules {
+    match app-id="firefox" open-maximized "true"
+    match app-id="Alacritty" open-int "column" default-column-width { proportion 0.5 }
+    match app-id="thunar" open-on-workspace 2
+    match app-id="pcmanfm" open-on-workspace 2
+    match app-id="Zathura" open-on-workspace "current"
+    match app-id="mpv" open-maximized "true" open-floating "true"
+    match is-opaque="false" open-floating "true"
+    match app-id="org.gnome.Settings" open-on-workspace 3
+}

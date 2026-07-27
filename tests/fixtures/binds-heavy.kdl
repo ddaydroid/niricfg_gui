@@ -1,0 +1,58 @@
+// Heavy bindings config — 50+ binds for stress-testing.
+
+binds {
+    Mod+Return spawn "foot"
+    Mod+Q close-window
+    Mod+T toggle-floating
+    Mod+Shift+Space switch-focus-between-floating-and-tiling
+    Mod+Shift+F switch-preset-workspace-forward
+    Mod+Shift+B switch-preset-workspace-backward
+    Mod+Shift+Left focus-column-left
+    Mod+Shift+Right focus-column-right
+    Mod+Shift+Up focus-column-up
+    Mod+Shift+Down focus-column-down
+    Mod+1 focus-workspace 1
+    Mod+2 focus-workspace 2
+    Mod+3 focus-workspace 3
+    Mod+4 focus-workspace 4
+    Mod+5 focus-workspace 5
+    Mod+6 focus-workspace 6
+    Mod+7 focus-workspace 7
+    Mod+8 focus-workspace 8
+    Mod+9 focus-workspace 9
+    Mod+Shift+1 move-column-to-workspace 1
+    Mod+Shift+2 move-column-to-workspace 2
+    Mod+Shift+3 move-column-to-workspace 3
+    Mod+Shift+4 move-column-to-workspace 4
+    Mod+Shift+5 move-column-to-workspace 5
+    Mod+Shift+6 move-column-to-workspace 6
+    Mod+Shift+7 move-column-to-workspace 7
+    Mod+Shift+8 move-column-to-workspace 8
+    Mod+Shift+9 move-column-to-workspace 9
+    Mod+Shift+Left move-column-left
+    Mod+Shift+Right move-column-right
+    Mod+Shift+Up move-column-up
+    Mod+Shift+Down move-column-down
+    Mod+Plus consume-or-expand-column
+    Mod+Minus set-column-width { proportion 0.33 }
+    Mod+Ctrl+Up focus-column-up
+    Mod+Ctrl+Down focus-column-down
+    Mod+Ctrl+Left focus-column-left
+    Mod+Ctrl+Right focus-column-right
+    Mod+Ctrl+1 focus-workspace 1
+    Mod+Ctrl+2 focus-workspace 2
+    Mod+Ctrl+3 focus-workspace 3
+    Mod+Ctrl+4 focus-workspace 4
+    Mod+Ctrl+5 focus-workspace 5
+    XF86AudioRaiseVolume spawn "pactl set-sink-volume @DEFAULT_SINK@ +5%"
+    XF86AudioLowerVolume spawn "pactl set-sink-volume @DEFAULT_SINK@ -5%"
+    XF86AudioMute spawn "pactl set-sink-mute @DEFAULT_SINK@ toggle"
+    XF86MonBrightnessUp spawn "brightnessctl set +10%"
+    XF86MonBrightnessDown spawn "brightnessctl set 10%-"
+    Print spawn "grim"
+    Alt+Print spawn "grim -g \"$(slurp)\""
+    Mod+Shift+E exit
+    Mod+R spawn "rofi -show run"
+    Mod+D spawn "rofi -show drun"
+    Mod+Shift+Q close-window
+}
