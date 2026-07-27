@@ -42,8 +42,11 @@ impl ToolRegistry {
 
     /// Slice of registered plugins in insertion order. Returns `&[DynTool]`
     /// so callers can use slice methods directly — `.len()`, `.first()`,
-    /// `.is_empty()`, `.iter()`, or `for t in registry.iter() { ... }`.
-    pub fn iter(&self) -> &[DynTool] {
+    /// `.is_empty()`, `.iter()` / `.into_iter()` yielding
+    /// `Iterator<Item = &DynTool>`, or `for t in registry.as_slice() { ... }`.
+    /// Method is named `as_slice` (not `iter`) so callers are not surprised
+    /// that the return type is a slice rather than an `Iterator`.
+    pub fn as_slice(&self) -> &[DynTool] {
         &self.tools
     }
 

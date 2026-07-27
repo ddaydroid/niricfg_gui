@@ -79,7 +79,7 @@ fn register_then_iter_sees_all_three_tools_in_insertion_order() {
         .register(mk_tool("gamma", 1))
         .expect("distinct id register ok");
 
-    let observed: Vec<&'static str> = registry.iter().iter().map(|t| t.id()).collect();
+    let observed: Vec<&'static str> = registry.as_slice().iter().map(|t| t.id()).collect();
     assert_eq!(
         observed,
         vec!["alpha", "beta", "gamma"],
@@ -101,7 +101,7 @@ fn register_rejects_duplicate_id_with_error_plugin() {
         result
     );
     // Verify the registry did NOT silently overwrite the original:
-    let observed: Vec<&'static str> = registry.iter().iter().map(|t| t.id()).collect();
+    let observed: Vec<&'static str> = registry.as_slice().iter().map(|t| t.id()).collect();
     assert_eq!(
         observed,
         vec!["dup"],
@@ -120,7 +120,7 @@ fn unregister_returns_none_for_missing_id_and_some_for_present() {
     let removed = registry.unregister("a");
     assert!(removed.is_some(), "unregister returns Some for present id");
     assert!(
-        registry.iter().is_empty(),
+        registry.as_slice().is_empty(),
         "registry is empty after the only tool is unregistered"
     );
     // Re-registering after unregister is allowed (id no longer in registry):
@@ -179,10 +179,10 @@ proptest! {
         // (ii) Unregister returns Some for the present id; registry empty afterward.
         let removed = registry.unregister(&id);
         prop_assert!(removed.is_some());
-        prop_assert_eq!(registry.iter().len(), 0);
+        prop_assert_eq!(registry.as_slice().len(), 0);
 
         // (iii) Re-register succeeds (slot freed).
         prop_assert!(registry.register(mk_tool(&id, 1)).is_ok());
-        prop_assert_eq!(registry.iter().len(), 1);
+        prop_assert_eq!(registry.as_slice().len(), 1);
     }
 }
