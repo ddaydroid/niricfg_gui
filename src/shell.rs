@@ -56,6 +56,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
+// Re-export libadwaita under the shorter `adw` name used throughout
+// this module (the underlying crate is `libadwaita` in 0.7.x).
+use libadwaita as adw;
+
+use gtk4::prelude::*;
+
 use crate::core::diff::line_diff;
 use crate::core::error::Error;
 use crate::core::file_watcher::FileWatcher;

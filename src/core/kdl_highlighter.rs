@@ -15,6 +15,7 @@
 #![cfg(feature = "gtk")]
 
 use gtk4::pango;
+use gtk4::prelude::TextTagExt;
 use gtk4::TextBuffer;
 
 // ---- Token recogniser ----
