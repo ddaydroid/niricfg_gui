@@ -427,6 +427,11 @@ fn set_tab_mode(state: &TabDiffState, show_diff: bool) {
 /// Build one editor tab page: banner + stack (editor ↔ diff view), with KDL
 /// highlighting and debounced async validation loop.
 ///
+/// `initial_text` is the on-disk content of the tool's config file — it is
+/// loaded into the text view and also stored as the diff baseline (original
+/// text) so the "Compare" toggle shows meaningful differences against the
+/// saved state rather than against an empty buffer.
+///
 /// Does NOT include a per-tab diff toggle — that lives in the sidebar's
 /// HeaderBar as a global toggle.
 ///
@@ -436,6 +441,7 @@ fn build_editor_page(
     tool_index: usize,
     tools: Rc<Vec<DynTool>>,
     tab_diff_state: &mut Vec<TabDiffState>,
+    initial_text: &str,
 ) -> (gtk4::Box, adw::Banner, gtk4::TextView) {
     // --- Banner (validation results) ---
     let banner = adw::Banner::new();
@@ -457,11 +463,14 @@ fn build_editor_page(
     text_view.set_margin_bottom(4);
     scrolled.set_child(Some(&text_view));
 
+    // Load initial content into the text view.
+    text_view.buffer().set_text(initial_text);
+
     // Apply KDL syntax highlighting.
     kdl_highlighter::apply_highlighting(&text_view.buffer());
 
-    // --- Original text snapshot (used for diff) ---
-    let original_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    // --- Original text snapshot (used for diff) — initialised from file ---
+    let original_text: Rc<RefCell<String>> = Rc::new(RefCell::new(initial_text.to_string()));
 
     // --- Diff view ---
     let diff_widget = build_diff_widget();
@@ -484,21 +493,6 @@ fn build_editor_page(
         right_buf: diff_widget.right_buf,
         left_line_label: diff_widget.left_line_label,
         right_line_label: diff_widget.right_line_label,
-    });
-
-    // Connect buffer changed: on first edit, snapshot original text.
-    let orig_set: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
-    let orig_set_c = orig_set.clone();
-    let tv_orig2 = original_text.clone();
-    text_view.buffer().connect_changed(move |buf| {
-        if !*orig_set_c.borrow() {
-            let current = buf
-                .text(&buf.start_iter(), &buf.end_iter(), false)
-                .unwrap_or_default()
-                .to_string();
-            *tv_orig2.borrow_mut() = current;
-            *orig_set_c.borrow_mut() = true;
-        }
     });
 
     // --- Layout: banner + stack ---
@@ -665,8 +659,20 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 row.set_child(Some(&label));
                 plugin_list.append(&row);
 
+                // Read the tool's config file from disk to populate the editor.
+                let config_path = tool.config_paths().iter().find(|p| p.exists()).cloned();
+                let initial_text = config_path
+                    .as_ref()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .unwrap_or_default();
+
+                // Call load() so the tool updates its internal state.
+                if let Some(ref path) = config_path {
+                    let _ = tool.load(path);
+                }
+
                 let (editor_widget, _banner, _text_view) =
-                    build_editor_page(i, tools.clone(), &mut *states);
+                    build_editor_page(i, tools.clone(), &mut *states, &initial_text);
                 tab_view.append(&editor_widget, tool.display_name());
             }
         }
