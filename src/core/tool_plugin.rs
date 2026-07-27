@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use crate::core::config_loader::{load_config, ConfigDoc};
 use crate::core::config_writer::save_config;
 use crate::core::error::{Error, ExternalChangeAction, ValidationIssue};
+use crate::core::validator::Validator;
 
 /// The platform-agnostic plugin contract.
 pub trait ToolPlugin: Send + Sync {
@@ -55,6 +56,16 @@ pub trait ToolPlugin: Send + Sync {
     /// added; explicit impls should bump on breaking-trait changes.
     fn api_version(&self) -> u32 {
         1
+    }
+
+    /// Access the async [`Validator`](Validator) for edit-time validation.
+    ///
+    /// The shell's debounce loop calls this after each edit (with the
+    /// validator's `debounce_hint` delay). Returns `None` for plugins
+    /// that don't perform async validation (pure-file plugins for
+    /// TOML/YAML/INI formats, headless tests, etc.).
+    fn validator(&self) -> Option<&dyn Validator> {
+        None
     }
 }
 

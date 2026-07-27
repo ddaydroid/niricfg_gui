@@ -224,6 +224,10 @@ impl ToolPlugin for NiriTool {
         // (that conflict is surfaced at the shell level).
         ExternalChangeAction::Reload
     }
+
+    fn validator(&self) -> Option<&dyn Validator> {
+        Some(&*self.validator)
+    }
 }
 
 impl KdlBackedTool for NiriTool {
