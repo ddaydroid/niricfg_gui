@@ -2,9 +2,22 @@
 //! value is usable from headless code (tests, CLI tools, validators). The
 //! GUI-only `create_shell_page` lives on a separate `ToolPluginUi` trait,
 //! gated behind `#[cfg(feature = "gtk")]`.
+//!
+//! The KDL-flavored `KdlBackedTool` sub-trait provides the canonical
+//! load-via-`load_config` / save-via-`save_config` round-trip with
+//! overridable default-methods. Plugins like `NiriTool` (Wave 2) opt in
+//! by `impl KdlBackedTool for NiriTool {}` and may override either
+//! method (e.g. NiriTool Step 8 will override `load_kdl` to also build
+//! the Semantic-Path index after parsing). Format-agnostic plugins
+//! (TOML/YAML/INI for sway/hyprland/waybar etc.) implement just
+//! `ToolPlugin` and never inherit the KDL-specific helpers — keeping
+//! the parent trait free of format-coupled surface area.
 
+use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
+use crate::core::config_loader::{load_config, ConfigDoc};
+use crate::core::config_writer::save_config;
 use crate::core::error::{Error, ExternalChangeAction, ValidationIssue};
 
 /// The platform-agnostic plugin contract.
@@ -53,4 +66,56 @@ pub type DynTool = Box<dyn ToolPlugin>;
 #[cfg(feature = "gtk")]
 pub trait ToolPluginUi: ToolPlugin {
     fn create_shell_page(&self) -> gtk4::Widget;
+}
+
+/// Sub-trait for tools whose state IS a KDL [`ConfigDoc`]. Mirrors the
+/// `ToolPluginUi` pattern: a focused extension on top of the
+/// format-agnostic `ToolPlugin`. Concrete plugins opt in with:
+///
+/// ```ignore
+/// impl KdlBackedTool for NiriTool {}
+/// ```
+///
+/// and inherit the canonical load-via-`load_config` +
+/// save-via-`save_config` round-trip. Default-methods may be overridden:
+///
+/// - **Wave 2's `NiriTool`** overrides `load_kdl` to also build the
+///   Semantic-Path index (Step 8) after parsing.
+/// - **Wave 2's `apply_saved`** (in `ToolPlugin`) calls `save_kdl` after
+///   the user hits Ctrl+S.
+///
+/// Like `ToolPluginUi`, this trait adds KDL-specific surface on top of a
+/// format-agnostic parent so future TOML/YAML/INI plugins can implement
+/// `ToolPlugin` without inheriting KDL-specific helpers.
+///
+/// Errors propagate `Error::Io(_)` for filesystem failures
+/// (`fs::read_to_string`, `save_config` parent missing / read-only /
+/// rename) and `Error::Kdl(_)` for syntactic parse failures inside the
+/// default `load_kdl` body. Overrides should preserve the same dual
+/// mapping so `dyn KdlBackedTool` callers get a consistent error
+/// vocabulary.
+pub trait KdlBackedTool: ToolPlugin {
+    /// Read `path` as UTF-8 text and parse via [`load_config`].
+    ///
+    /// Default-method — concrete tools may override to attach
+    /// domain-specific post-parse setup (Semantic-Path indexing, drift
+    /// detection, plugin-specific augmentation). Overrides should
+    /// preserve the dual error mapping (`Error::Io` for I/O,
+    /// `Error::Kdl` for parse).
+    fn load_kdl(&self, path: &Path) -> Result<ConfigDoc, Error> {
+        let text = read_to_string(path)?;
+        load_config(&text)
+    }
+
+    /// Serialize `doc` to `target` atomically via [`save_config`]
+    /// (tempfile-in-target-dir + sync_all + persist rename).
+    ///
+    /// Default-method — concrete tools may override for custom
+    /// pre-serialization transformations (header injection, section
+    /// reordering, plugin-specific normalization). Overrides should
+    /// preserve the atomic-write property so a crashed mid-save leaves
+    /// either the old or new file on disk, never a hybrid.
+    fn save_kdl(&self, doc: &ConfigDoc, target: &Path) -> Result<(), Error> {
+        save_config(doc, target)
+    }
 }
