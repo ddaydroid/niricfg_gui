@@ -54,6 +54,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 // Re-export libadwaita under the shorter `adw` name used throughout
@@ -613,10 +614,10 @@ fn build_editor_page(
 ///   "Reload" (discard edits and load on-disk content) and "Ignore" (keep
 ///   editor state as-is).
 fn handle_external_change(
-    tab_states: &Rc<RefCell<Vec<TabDiffState>>>,
+    tab_states: &Arc<Mutex<Vec<TabDiffState>>>,
     changed_path: &std::path::Path,
 ) {
-    let states = tab_states.borrow();
+    let states = tab_states.lock().unwrap();
     // Find the tab whose config_path matches the changed path.
     let tab_idx = states
         .iter()
@@ -668,7 +669,7 @@ fn handle_external_change(
         let st = tab_states.clone();
         dialog.connect_response(None, move |_dlg, response| {
             if response == "reload" {
-                let states = st.borrow();
+                let states = st.lock().unwrap();
                 if let Some(s) = states.get(idx) {
                     let txt = new_text.clone();
                     s.editor_buf.set_text(&txt);
@@ -706,7 +707,7 @@ fn handle_external_change(
 pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
     let app = adw::Application::new(Some("com.d3t0x.niricfg"), Default::default());
     let tools = Rc::new(plugins);
-    let tab_diff_states: Rc<RefCell<Vec<TabDiffState>>> = Rc::new(RefCell::new(Vec::new()));
+    let tab_diff_states: Arc<Mutex<Vec<TabDiffState>>> = Arc::new(Mutex::new(Vec::new()));
 
     app.connect_activate(move |app| {
         let window = adw::ApplicationWindow::new(app);
@@ -758,7 +759,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
 
         // --- Populate sidebar rows + editor tabs ---
         {
-            let mut states = tab_diff_states.borrow_mut();
+            let mut states = tab_diff_states.lock().unwrap();
             for (i, tool) in tools.as_slice().iter().enumerate() {
                 let row = gtk4::ListBoxRow::new();
                 let label = gtk4::Label::new(Some(tool.display_name()));
@@ -807,7 +808,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         let states = tab_diff_states.clone();
         diff_toggle.connect_toggled(move |btn| {
             let show_diff = btn.is_active();
-            let states = states.borrow();
+            let states = states.lock().unwrap();
             for state in states.iter() {
                 if show_diff {
                     refresh_tab_diff(state);
@@ -819,7 +820,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         // --- Set window refs + config paths on each tab state ---
         // (window was created after build_editor_page, so we fill them now)
         {
-            let mut states = tab_diff_states.borrow_mut();
+            let mut states = tab_diff_states.lock().unwrap();
             for (state, tool) in states.iter_mut().zip(tools.as_slice().iter()) {
                 state.window = window.downgrade();
                 state.config_path = tool.config_paths().iter().find(|p| p.exists()).cloned();
@@ -850,13 +851,11 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                             eprintln!("dotcfg-gui: file watcher start failed: {e}");
                             return;
                         }
-                    };
-
-                    // Debounce state per path (Rc<RefCell<>> so the invoke
-                    // closure can share it with glib timeouts).
-                    let last_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
-                    let debounce_src: Rc<RefCell<Option<glib::SourceId>>> =
-                        Rc::new(RefCell::new(None));
+                    }; // Debounce state per path (uses Arc<Mutex<>> because
+                       // it crosses thread boundaries in ctx.invoke).
+                    let last_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
+                    let debounce_src: Arc<Mutex<Option<glib::SourceId>>> =
+                        Arc::new(Mutex::new(None));
 
                     loop {
                         if let Some(path) = watcher.next_event().await {
@@ -867,23 +866,23 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
 
                             ctx.invoke(move || {
                                 // Cancel previous debounce timer.
-                                if let Some(id) = ds.borrow_mut().take() {
+                                if let Some(id) = ds.lock().unwrap().take() {
                                     id.remove();
                                 }
-                                *lp.borrow_mut() = Some(path);
+                                *lp.lock().unwrap() = Some(path);
 
                                 // Start a 500ms debounce timer.
                                 let src = glib::timeout_add_local(
                                     Duration::from_millis(500),
                                     move || {
-                                        let path_opt = lp.borrow().clone();
+                                        let path_opt = lp.lock().unwrap().clone();
                                         if let Some(ref p) = path_opt {
                                             handle_external_change(&st, p);
                                         }
                                         glib::ControlFlow::Break
                                     },
                                 );
-                                *ds.borrow_mut() = Some(src);
+                                *ds.lock().unwrap() = Some(src);
                             });
                         }
                     }
