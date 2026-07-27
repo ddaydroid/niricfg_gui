@@ -5,7 +5,7 @@
 #![cfg(feature = "gtk")]
 
 use crate::core::error::Error;
-use crate::core::DynTool;
+use crate::DynTool;
 
 /// Launch the dotcfg-gui GUI shell.
 ///
