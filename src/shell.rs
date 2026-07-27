@@ -877,17 +877,13 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
             let watcher_debounce_src: Rc<RefCell<Option<glib::SourceId>>> =
                 Rc::new(RefCell::new(None));
             let watcher_last_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
-            let rx = Rc::new(RefCell::new(rx));
-
             // Poll at 100ms intervals for channel events.
-            let poll_rx = rx.clone();
             let poll_ds = watcher_debounce_src.clone();
             let poll_lp = watcher_last_path.clone();
             let poll_st = tab_diff_states.clone();
 
             glib::timeout_add_local(Duration::from_millis(100), move || {
                 // Drain all available events from the channel.
-                let rx = poll_rx.borrow();
                 while let Ok(path) = rx.try_recv() {
                     // Cancel previous debounce timer.
                     if let Some(id) = poll_ds.borrow_mut().take() {
