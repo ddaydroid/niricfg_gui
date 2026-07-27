@@ -12,6 +12,7 @@
 //! "Raw" text editor tab instead.
 
 use kdl::{KdlDocument, KdlEntry, KdlValue};
+use libadwaita as adw;
 use std::str::FromStr;
 
 use crate::tools::niri::NiriTool;

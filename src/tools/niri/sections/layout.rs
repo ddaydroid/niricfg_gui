@@ -19,6 +19,7 @@
 //! ```
 
 use kdl::{KdlDocument, KdlValue};
+use libadwaita as adw;
 use std::str::FromStr;
 
 use crate::tools::niri::NiriTool;
