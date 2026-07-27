@@ -1,19 +1,31 @@
-// dotcfg-gui — extensible GTK4/libadwaita dotfile config editor (v0.1.0-stub).
-// Real implementation lands in subsequent commits per the v0.0.0-spec plan at
-// .specs/tasks/todo/implement-dotcfg-gui.feature.md (Step 1 of 22).
+//! Thin shell entrypoint. The real work lives in the `dotcfg_gui` library
+//! crate; this binary only chooses between a no-GUI exit (for unit-test CI
+//! jobs that run the unit tests on a headless machine) and the GTK shell
+//! entrypoint.
 
 fn main() {
-    println!("dotcfg-gui v0.1.0-stub; full implementation lands in subsequent commits.");
+    #[cfg(not(feature = "gtk"))]
+    {
+        println!(
+            "dotcfg-gui core built without the `gtk` feature (so no GUI). \
+             Build with `--features gtk` for the GUI shell. Exiting 0."
+        );
+    }
+
+    #[cfg(feature = "gtk")]
+    {
+        if let Err(e) = dotcfg_gui::run_shell(vec![]) {
+            eprintln!("dotcfg-gui: shell error: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    /// Placeholder test target so `cargo nextest run --no-default-features` does
-    /// not exit with NO_TESTS_RUN (exit code 4) on the stub commit. Real test
-    /// targets live under `tests/` per the integration-test layout convention
-    /// documented in `tests/README.md`; the first ones land in Wave 0 Step 2 of
-    /// `.specs/tasks/todo/implement-dotcfg-gui.feature.md`
-    /// (ToolPlugin discovery + UndoStack round-trip).
+    /// Placeholder so `cargo nextest run --no-default-features` does not exit
+    /// with NO_TESTS_RUN on Wave 0 Step 2. Real test targets live in `tests/`;
+    /// the first integration target is `tests/undo_stack_round_trip.rs`.
     #[test]
     fn nextest_smoke_discovery() {}
 }
