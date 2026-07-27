@@ -107,9 +107,7 @@ fn build_diff_editor_side() -> (gtk4::Box, gtk4::TextView, gtk4::Label) {
     // use CSS to set monospace font for the line-number gutter.
     {
         let css_provider = gtk4::CssProvider::new();
-        css_provider
-            .load_from_string("* { font-family: monospace; }")
-            .expect("inline CSS is valid");
+        css_provider.load_from_string("* { font-family: monospace; }");
         line_label
             .style_context()
             .add_provider(&css_provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -753,7 +751,9 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         content_box.append(&tab_bar);
         content_box.append(&tab_view);
 
-        split_view.set_content(Some(&content_box));
+        // set_content also requires an IsA<NavigationPage> wrapper.
+        let content_page = adw::NavigationPage::new(&content_box, "Editor");
+        split_view.set_content(Some(&content_page));
         window.set_content(Some(&split_view));
 
         // --- Populate sidebar rows + editor tabs ---
