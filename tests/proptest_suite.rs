@@ -399,7 +399,7 @@ proptest! {
         let text_len = text.len();
         let index = build_index(&doc);
 
-        for (_path, &(offset, len)) in index.entries.iter() {
+        for &(offset, len) in index.entries.values() {
             assert!(
                 offset + len <= text_len,
                 "index entry offset+len exceeds source length.\n\
