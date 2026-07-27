@@ -50,11 +50,15 @@
 #![cfg(feature = "gtk")]
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::core::diff::line_diff;
 use crate::core::error::Error;
+use crate::core::file_watcher::FileWatcher;
 use crate::core::kdl_highlighter;
 use crate::DynTool;
 
@@ -64,7 +68,8 @@ const GUTTER_ADDED: char = '+';
 const GUTTER_REMOVED: char = '-';
 const GUTTER_MODIFIED: char = '~';
 
-/// Per-tab state needed by the global diff toggle.
+/// Per-tab state needed by the global diff toggle and external-change
+/// handler.
 struct TabDiffState {
     stack: gtk4::Stack,
     editor_buf: gtk4::TextBuffer,
@@ -73,6 +78,10 @@ struct TabDiffState {
     right_buf: gtk4::TextBuffer,
     left_line_label: gtk4::Label,
     right_line_label: gtk4::Label,
+    /// Weak reference to the parent window so we can present dialogs.
+    window: glib::WeakRef<adw::ApplicationWindow>,
+    /// The tool's config path on disk (for reloading content).
+    config_path: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +493,9 @@ fn build_editor_page(
     stack.add_titled(&scrolled, Some("editor"), "Editor");
     stack.add_titled(&diff_widget.paned, Some("diff"), "Diff");
 
-    // Push TabDiffState so the global toggle can manage this tab.
+    // Push TabDiffState so the global toggle & external-change handler
+    // can manage this tab. The window reference is set later by run_shell
+    // (the window is not yet created at build_editor_page time).
     tab_diff_state.push(TabDiffState {
         stack: stack.clone(),
         editor_buf: text_view.buffer(),
@@ -493,6 +504,8 @@ fn build_editor_page(
         right_buf: diff_widget.right_buf,
         left_line_label: diff_widget.left_line_label,
         right_line_label: diff_widget.right_line_label,
+        window: glib::WeakRef::new(),
+        config_path: None,
     });
 
     // --- Layout: banner + stack ---
@@ -577,6 +590,92 @@ fn build_editor_page(
     });
 
     (vbox, banner, text_view)
+}
+
+// ---------------------------------------------------------------------------
+// External-change handling
+// ---------------------------------------------------------------------------
+
+/// Handle an external file change detected by the FileWatcher.
+///
+/// - If the editor is **clean** (no unsaved edits), the content is silently
+///   reloaded and the original_text snapshot is updated.
+/// - If the editor is **dirty**, an `adw::AlertDialog` is presented with
+///   "Reload" (discard edits and load on-disk content) and "Ignore" (keep
+///   editor state as-is).
+fn handle_external_change(
+    tab_states: &Rc<RefCell<Vec<TabDiffState>>>,
+    changed_path: &std::path::Path,
+) {
+    let states = tab_states.borrow();
+    // Find the tab whose config_path matches the changed path.
+    let tab_idx = states
+        .iter()
+        .position(|s| s.config_path.as_ref().map_or(false, |p| p == changed_path));
+
+    let idx = match tab_idx {
+        Some(i) => i,
+        None => return, // no tab cares about this path
+    };
+
+    let state = &states[idx];
+
+    // Read new file content.
+    let new_text = match std::fs::read_to_string(changed_path) {
+        Ok(t) => t,
+        Err(_) => return, // file disappeared; silently ignore
+    };
+
+    // Check if dirty: compare current editor text against original snapshot.
+    let current = state
+        .editor_buf
+        .text(
+            &state.editor_buf.start_iter(),
+            &state.editor_buf.end_iter(),
+            false,
+        )
+        .unwrap_or_default()
+        .to_string();
+    let original = state.original_text.borrow();
+    let is_dirty = current != *original;
+    drop(original);
+
+    if is_dirty {
+        // --- Dirty → show conflict dialog ---
+        let window_opt = state.window.upgrade();
+        let Some(window) = window_opt else { return };
+
+        let dialog = adw::AlertDialog::new(
+            Some("External Change Detected"),
+            Some(
+                "The config file was modified by another application. \
+                  Reloading will discard your unsaved changes.",
+            ),
+        );
+        dialog.add_response("ignore", "_Ignore");
+        dialog.add_response("reload", "_Reload");
+        dialog.set_default_response(Some("ignore"));
+        dialog.set_close_response("ignore");
+
+        let st = tab_states.clone();
+        let new_txt = new_text.clone();
+        dialog.connect_response(move |_dlg, response| {
+            if response == "reload" {
+                let states = st.borrow();
+                if let Some(s) = states.get(idx) {
+                    s.editor_buf.set_text(&new_txt);
+                    *s.original_text.borrow_mut() = new_txt;
+                }
+            }
+            // "ignore": do nothing, keep editor state intact
+        });
+
+        dialog.present(&window);
+    } else {
+        // --- Clean → silent reload ---
+        state.editor_buf.set_text(&new_text);
+        *state.original_text.borrow_mut() = new_text;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -705,6 +804,81 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 set_tab_mode(state, show_diff);
             }
         });
+
+        // --- Set window refs + config paths on each tab state ---
+        // (window was created after build_editor_page, so we fill them now)
+        {
+            let mut states = tab_diff_states.borrow_mut();
+            for (state, tool) in states.iter_mut().zip(tools.as_slice().iter()) {
+                state.window = window.downgrade();
+                state.config_path = tool.config_paths().iter().find(|p| p.exists()).cloned();
+            }
+        }
+
+        // --- Start the async file watcher for external-edit detection ---
+        let watch_paths: Vec<PathBuf> = tools
+            .as_slice()
+            .iter()
+            .flat_map(|t| t.config_paths())
+            .filter(|p| p.exists())
+            .collect();
+
+        let is_saving: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+        // TODO: wire is_saving guard into the save path (future step).
+        let _is_saving = is_saving;
+
+        if !watch_paths.is_empty() {
+            let main_ctx = glib::MainContext::default();
+            let states_for_watcher = tab_diff_states.clone();
+
+            std::thread::spawn(move || {
+                async_std::task::block_on(async move {
+                    let watcher = match FileWatcher::watch(watch_paths).await {
+                        Ok(w) => w,
+                        Err(e) => {
+                            eprintln!("dotcfg-gui: file watcher start failed: {e}");
+                            return;
+                        }
+                    };
+
+                    // Debounce state per path (Rc<RefCell<>> so the invoke
+                    // closure can share it with glib timeouts).
+                    let last_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+                    let debounce_src: Rc<RefCell<Option<glib::SourceId>>> =
+                        Rc::new(RefCell::new(None));
+
+                    loop {
+                        if let Some(path) = watcher.next_event().await {
+                            let ctx = main_ctx.clone();
+                            let lp = last_path.clone();
+                            let ds = debounce_src.clone();
+                            let st = states_for_watcher.clone();
+
+                            ctx.invoke(move || {
+                                // Cancel previous debounce timer.
+                                if let Some(id) = ds.borrow_mut().take() {
+                                    id.remove();
+                                }
+                                *lp.borrow_mut() = Some(path);
+
+                                // Start a 500ms debounce timer.
+                                let src = glib::timeout_add_local(
+                                    Duration::from_millis(500),
+                                    move || {
+                                        let path_opt = lp.borrow().clone();
+                                        if let Some(ref p) = path_opt {
+                                            handle_external_change(&st, p);
+                                        }
+                                        glib::ControlFlow::Break
+                                    },
+                                );
+                                *ds.borrow_mut() = Some(src);
+                            });
+                        }
+                    }
+                });
+            });
+        }
 
         window.present();
     });
