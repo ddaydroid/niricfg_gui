@@ -35,6 +35,14 @@ pub trait ToolPlugin: Send + Sync {
     /// Called by the inotify watcher when an external change is detected on
     /// a config path this plugin owns.
     fn on_external_change(&self) -> ExternalChangeAction;
+
+    /// Plugin's API version. The registry's `is_plugin_compatible` uses this
+    /// for forward-compatibility gating. Default impl returns 1 so existing
+    /// `ToolPlugin` impls continue compiling unchanged after this method is
+    /// added; explicit impls should bump on breaking-trait changes.
+    fn api_version(&self) -> u32 {
+        1
+    }
 }
 
 /// Convenience alias for the registry's element type.
