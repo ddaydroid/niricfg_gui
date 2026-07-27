@@ -125,5 +125,16 @@ jobs:
           tool: cargo-fuzz@0.13.2
       - uses: Swatinem/rust-cache@v2
       - name: Run cargo fuzz on kdl_parser (30s budget)
+        env:
+          # Force host (gnu) target: cargo-fuzz's autodetection picks musl on
+          # ubuntu-24.04 runners in some setups, whose musl std library isn't
+          # pre-installed + whose static-CRT linking breaks libFuzzer's sanitizer
+          # (rustc: "sanitizer is incompatible with statically linked libc").
+          # CARGO_BUILD_TARGET is cargo's canonical env var and is honoured by
+          # cargo-fuzz's underlying `cargo` invocation.
+          CARGO_BUILD_TARGET: x86_64-unknown-linux-gnu
+          # Disable static libc linking so libFuzzer's AddressSanitizer works.
+          # libfuzzer-sys's build.rs forces +crt-static; we override that here.
+          RUSTFLAGS: "-C target-feature=-crt-static"
         # Fails until fuzz/fuzz_targets/kdl_parser.rs is committed; this enforces Step 19/21 of the spec.
         run: cargo +nightly fuzz run kdl_parser -- -max_total_time=30
