@@ -59,8 +59,8 @@ use std::time::Duration;
 // Re-export libadwaita under the shorter `adw` name used throughout
 // this module (the underlying crate is `libadwaita` in 0.7.x).
 use gtk4::pango;
-use gtk4::prelude::*;
 use libadwaita as adw;
+use libadwaita::prelude::*;
 
 use crate::core::diff::line_diff;
 use crate::core::error::Error;
@@ -549,8 +549,8 @@ fn build_editor_page(
         let end = buf.end_iter();
         let text: String = buf
             .text(&start, &end, false)
-            .unwrap_or_default()
-            .to_string();
+            .map(|g| g.to_string())
+            .unwrap_or_default();
 
         let timer_tools = tools_clone.clone();
         let timer_banner = banner_clone.clone();

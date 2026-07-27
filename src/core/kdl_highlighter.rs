@@ -228,7 +228,10 @@ impl HighlightTags {
         let end = buffer.end_iter();
         buffer.remove_all_tags(&start, &end);
 
-        let text = buffer.text(&start, &end, false).unwrap_or_default();
+        let text: String = buffer
+            .text(&start, &end, false)
+            .map(|g| g.to_string())
+            .unwrap_or_default();
         let tokens = tokenize(&text);
 
         for tok in tokens {
