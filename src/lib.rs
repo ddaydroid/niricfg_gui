@@ -15,6 +15,7 @@ pub use crate::core::file_watcher::FileWatcher;
 pub use crate::core::tool_plugin::{DynTool, KdlBackedTool, ToolPlugin};
 pub use crate::core::tool_registry::ToolRegistry;
 pub use crate::core::undo_stack::{UndoCommand, UndoStack};
+pub use crate::core::validator::{BoxFuture, CannedValidator, NoopValidator, Validator};
 
 #[cfg(feature = "gtk")]
 pub use crate::core::tool_plugin::ToolPluginUi;
