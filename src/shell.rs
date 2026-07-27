@@ -787,7 +787,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 }
 
                 let (editor_widget, _banner, _text_view) =
-                    build_editor_page(i, tools.clone(), &mut *states, &initial_text);
+                    build_editor_page(i, tools.clone(), &mut states, &initial_text);
                 let page = tab_view.append(&editor_widget);
                 page.set_title(tool.display_name());
             }
@@ -798,7 +798,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         plugin_list.connect_row_activated(move |_list, row| {
             let idx = row.index();
             if idx >= 0 {
-                let page = tab_view_clone.nth_page(idx as i32);
+                let page = tab_view_clone.nth_page(idx);
                 tab_view_clone.set_selected_page(&page);
             }
         });
