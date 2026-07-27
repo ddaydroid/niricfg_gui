@@ -8,10 +8,12 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    /// Smoke test: confirms the binary crate compiles under `cargo test`.
-    /// Real tests arrive in Wave 0 Step 2 (ToolPlugin trait + UndoStack + shell scaffolding).
-    /// Exists to keep `cargo nextest run --no-default-features` from exiting with
-    /// NO_TESTS_RUN (exit code 4) on the stub commit.
+    /// Placeholder test target so `cargo nextest run --no-default-features` does
+    /// not exit with NO_TESTS_RUN (exit code 4) on the stub commit. Real test
+    /// targets live under `tests/` per the integration-test layout convention
+    /// documented in `tests/README.md`; the first ones land in Wave 0 Step 2 of
+    /// `.specs/tasks/todo/implement-dotcfg-gui.feature.md`
+    /// (ToolPlugin discovery + UndoStack round-trip).
     #[test]
-    fn main_compiles() {}
+    fn nextest_smoke_discovery() {}
 }
