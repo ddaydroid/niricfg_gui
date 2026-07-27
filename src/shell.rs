@@ -465,7 +465,7 @@ fn build_editor_page(
     initial_text: &str,
 ) -> (gtk4::Box, adw::Banner, gtk4::TextView) {
     // --- Banner (validation results) ---
-    let banner = adw::Banner::new();
+    let banner = adw::Banner::new("");
     banner.set_revealed(false);
 
     // --- Text editor ---
@@ -667,7 +667,7 @@ fn handle_external_change(
 
         let st = tab_states.clone();
         let new_txt = new_text.clone();
-        dialog.connect_response(move |_dlg, response| {
+        dialog.connect_response(None, move |_dlg, response| {
             if response == "reload" {
                 let states = st.borrow();
                 if let Some(s) = states.get(idx) {
@@ -678,7 +678,7 @@ fn handle_external_change(
             // "ignore": do nothing, keep editor state intact
         });
 
-        dialog.present(&window);
+        dialog.present(Some(&window));
     } else {
         // --- Clean → silent reload ---
         state.editor_buf.set_text(&new_text);
@@ -716,8 +716,8 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         // --- Navigation split view: sidebar | content ---
         let split_view = adw::NavigationSplitView::new();
         split_view.set_sidebar_width_fraction(0.25);
-        split_view.set_min_sidebar_width(180);
-        split_view.set_max_sidebar_width(350);
+        split_view.set_min_sidebar_width(180.0);
+        split_view.set_max_sidebar_width(350.0);
 
         // --- Sidebar: plugin list in a ToolbarView ---
         let sidebar = adw::ToolbarView::new();
@@ -784,7 +784,8 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
 
                 let (editor_widget, _banner, _text_view) =
                     build_editor_page(i, tools.clone(), &mut *states, &initial_text);
-                tab_view.append(&editor_widget, tool.display_name());
+                let page = tab_view.append(&editor_widget);
+                page.set_title(Some(tool.display_name()));
             }
         }
 
@@ -793,16 +794,14 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         plugin_list.connect_row_activated(move |_list, row| {
             let idx = row.index();
             if idx >= 0 {
-                if let Some(page) = tab_view_clone.nth_page(idx as u32) {
-                    tab_view_clone.set_selected_page(&page);
-                }
+                let page = tab_view_clone.nth_page(idx as i32);
+                tab_view_clone.set_selected_page(&page);
             }
         });
 
         // Select the first tab by default.
-        if let Some(page) = tab_view.nth_page(0) {
-            tab_view.set_selected_page(&page);
-        }
+        let page = tab_view.nth_page(0);
+        tab_view.set_selected_page(&page);
 
         // --- Wire the global diff toggle ---
         let states = tab_diff_states.clone();
