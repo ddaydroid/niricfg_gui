@@ -52,9 +52,9 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
+use std::sync::mpsc;
 use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::AtomicBool;
 use std::time::Duration;
 
 // Re-export libadwaita under the shorter `adw` name used throughout
@@ -614,10 +614,10 @@ fn build_editor_page(
 ///   "Reload" (discard edits and load on-disk content) and "Ignore" (keep
 ///   editor state as-is).
 fn handle_external_change(
-    tab_states: &Arc<Mutex<Vec<TabDiffState>>>,
+    tab_states: &Rc<RefCell<Vec<TabDiffState>>>,
     changed_path: &std::path::Path,
 ) {
-    let states = tab_states.lock().unwrap();
+    let states = tab_states.borrow();
     // Find the tab whose config_path matches the changed path.
     let tab_idx = states
         .iter()
@@ -669,7 +669,7 @@ fn handle_external_change(
         let st = tab_states.clone();
         dialog.connect_response(None, move |_dlg, response| {
             if response == "reload" {
-                let states = st.lock().unwrap();
+                let states = st.borrow_mut();
                 if let Some(s) = states.get(idx) {
                     let txt = new_text.clone();
                     s.editor_buf.set_text(&txt);
@@ -707,7 +707,7 @@ fn handle_external_change(
 pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
     let app = adw::Application::new(Some("com.d3t0x.niricfg"), Default::default());
     let tools = Rc::new(plugins);
-    let tab_diff_states: Arc<Mutex<Vec<TabDiffState>>> = Arc::new(Mutex::new(Vec::new()));
+    let tab_diff_states: Rc<RefCell<Vec<TabDiffState>>> = Rc::new(RefCell::new(Vec::new()));
 
     app.connect_activate(move |app| {
         let window = adw::ApplicationWindow::new(app);
@@ -759,7 +759,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
 
         // --- Populate sidebar rows + editor tabs ---
         {
-            let mut states = tab_diff_states.lock().unwrap();
+            let mut states = tab_diff_states.borrow_mut();
             for (i, tool) in tools.as_slice().iter().enumerate() {
                 let row = gtk4::ListBoxRow::new();
                 let label = gtk4::Label::new(Some(tool.display_name()));
@@ -808,7 +808,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         let states = tab_diff_states.clone();
         diff_toggle.connect_toggled(move |btn| {
             let show_diff = btn.is_active();
-            let states = states.lock().unwrap();
+            let states = states.borrow();
             for state in states.iter() {
                 if show_diff {
                     refresh_tab_diff(state);
@@ -820,14 +820,16 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         // --- Set window refs + config paths on each tab state ---
         // (window was created after build_editor_page, so we fill them now)
         {
-            let mut states = tab_diff_states.lock().unwrap();
+            let mut states = tab_diff_states.borrow_mut();
             for (state, tool) in states.iter_mut().zip(tools.as_slice().iter()) {
                 state.window = window.downgrade();
                 state.config_path = tool.config_paths().iter().find(|p| p.exists()).cloned();
             }
-        }
-
-        // --- Start the async file watcher for external-edit detection ---
+        } // --- Start the async file watcher for external-edit detection ---
+          // Using a channel-based approach: the watcher thread sends PathBuf
+          // events through an mpsc channel; a glib timeout on the GTK main
+          // thread polls the receiver and dispatches to handle_external_change.
+          // This avoids sharing GTK (non-Send) state across thread boundaries.
         let watch_paths: Vec<PathBuf> = tools
             .as_slice()
             .iter()
@@ -840,9 +842,9 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         let _is_saving = is_saving;
 
         if !watch_paths.is_empty() {
-            let main_ctx = glib::MainContext::default();
-            let states_for_watcher = tab_diff_states.clone();
-
+            let (tx, rx) = mpsc::channel::<PathBuf>();
+            // Spawn the file watcher thread. It forwards events via
+            // the mpsc sender — no shared GTK state crosses threads.
             std::thread::spawn(move || {
                 async_std::task::block_on(async move {
                     let watcher = match FileWatcher::watch(watch_paths).await {
@@ -851,42 +853,58 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                             eprintln!("dotcfg-gui: file watcher start failed: {e}");
                             return;
                         }
-                    }; // Debounce state per path (uses Arc<Mutex<>> because
-                       // it crosses thread boundaries in ctx.invoke).
-                    let last_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
-                    let debounce_src: Arc<Mutex<Option<glib::SourceId>>> =
-                        Arc::new(Mutex::new(None));
+                    };
 
                     loop {
                         if let Some(path) = watcher.next_event().await {
-                            let ctx = main_ctx.clone();
-                            let lp = last_path.clone();
-                            let ds = debounce_src.clone();
-                            let st = states_for_watcher.clone();
-
-                            ctx.invoke(move || {
-                                // Cancel previous debounce timer.
-                                if let Some(id) = ds.lock().unwrap().take() {
-                                    id.remove();
-                                }
-                                *lp.lock().unwrap() = Some(path);
-
-                                // Start a 500ms debounce timer.
-                                let src = glib::timeout_add_local(
-                                    Duration::from_millis(500),
-                                    move || {
-                                        let path_opt = lp.lock().unwrap().clone();
-                                        if let Some(ref p) = path_opt {
-                                            handle_external_change(&st, p);
-                                        }
-                                        glib::ControlFlow::Break
-                                    },
-                                );
-                                *ds.lock().unwrap() = Some(src);
-                            });
+                            // mpsc::Sender is Send+Sync, safe to use
+                            // from the watcher thread.
+                            if tx.send(path).is_err() {
+                                // Receiver dropped (GTK loop exited).
+                                return;
+                            }
                         }
                     }
                 });
+            });
+
+            // On the GTK main thread, poll the mpsc receiver with a
+            // 500ms external-change debounce: on each event, cancel the
+            // pending timer and start a new one.
+            let watcher_debounce_src: Rc<RefCell<Option<glib::SourceId>>> =
+                Rc::new(RefCell::new(None));
+            let watcher_last_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+            let rx = Rc::new(RefCell::new(rx));
+
+            // Poll at 100ms intervals for channel events.
+            let poll_rx = rx.clone();
+            let poll_ds = watcher_debounce_src.clone();
+            let poll_lp = watcher_last_path.clone();
+            let poll_st = tab_diff_states.clone();
+
+            glib::timeout_add_local(Duration::from_millis(100), move || {
+                // Drain all available events from the channel.
+                let rx = poll_rx.borrow();
+                while let Ok(path) = rx.try_recv() {
+                    // Cancel previous debounce timer.
+                    if let Some(id) = poll_ds.borrow_mut().take() {
+                        id.remove();
+                    }
+                    *poll_lp.borrow_mut() = Some(path);
+
+                    // Start a 500ms debounce timer.
+                    let lp = poll_lp.clone();
+                    let st = poll_st.clone();
+                    let src = glib::timeout_add_local(Duration::from_millis(500), move || {
+                        let path_opt = lp.borrow().clone();
+                        if let Some(ref p) = path_opt {
+                            handle_external_change(&st, p);
+                        }
+                        glib::ControlFlow::Break
+                    });
+                    *poll_ds.borrow_mut() = Some(src);
+                }
+                glib::ControlFlow::Continue
             });
         }
 
