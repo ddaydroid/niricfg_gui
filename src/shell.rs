@@ -69,6 +69,9 @@ use crate::core::kdl_highlighter;
 use crate::core::state_persistence::{load_shell_window_state, save_shell_window_state};
 use crate::DynTool;
 
+#[cfg(feature = "gtk")]
+use crate::tools::niri_shell::build_niri_sections;
+
 /// Character displayed in the gutter for each diff status.
 const GUTTER_SAME: char = ' ';
 const GUTTER_ADDED: char = '+';
@@ -501,13 +504,20 @@ fn build_editor_page(
     // --- Diff view ---
     let diff_widget = build_diff_widget();
 
-    // --- Stack: editor ↔ diff ---
+    // --- Stack: sections / editor / diff ---
+    // For NiriTool (Wave 3 Step 10), add a "Sections" tab with structured
+    // widget editors (SpinRow, SwitchRow, etc.) before the raw text editor.
     let stack = gtk4::Stack::new();
     stack.set_transition_type(gtk4::StackTransitionType::Crossfade);
     stack.set_vexpand(true);
     stack.set_hexpand(true);
 
-    stack.add_titled(&scrolled, Some("editor"), "Editor");
+    // Try to build section widgets for this tool (NiriTool v1).
+    if let Some(sections_widget) = build_niri_sections(&*tools[tool_index], &text_view.buffer()) {
+        stack.add_titled(&sections_widget, Some("sections"), "Sections");
+    }
+
+    stack.add_titled(&scrolled, Some("raw"), "Raw");
     stack.add_titled(&diff_widget.paned, Some("diff"), "Diff");
 
     // Push TabDiffState so the global toggle & external-change handler

@@ -21,6 +21,7 @@
 //! `tests/tool_registry_round_trip.rs` is reserved for proptest-generated
 //! ids where the string isn't known until runtime.
 
+use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use dotcfg_gui::{Error, ExternalChangeAction, KdlBackedTool, ToolPlugin, ValidationIssue};
@@ -71,6 +72,10 @@ impl ToolPlugin for KdlTestTool {
     }
     fn api_version(&self) -> u32 {
         self.api_version
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

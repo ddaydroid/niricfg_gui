@@ -13,6 +13,7 @@
 //! `ToolPlugin` and never inherit the KDL-specific helpers — keeping
 //! the parent trait free of format-coupled surface area.
 
+use std::any::Any;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
@@ -80,16 +81,24 @@ pub trait ToolPlugin: Send + Sync {
             self.display_name()
         )))
     }
+
+    /// Allow downcasting to concrete types for shell-level extension.
+    /// Implement as `fn as_any(&self) -> &dyn Any { self }`.
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// Convenience alias for the registry's element type.
 pub type DynTool = Box<dyn ToolPlugin>;
 
 /// GTK-specific extension: build the libadwaita widget tree for this plugin's
-/// main pane. Only available with `--features gtk`.
+/// main pane. The shell passes the shared text buffer so section widgets can
+/// write their changes into the same buffer that drives the validation loop
+/// and diff view.
+///
+/// Only available with `--features gtk`.
 #[cfg(feature = "gtk")]
 pub trait ToolPluginUi: ToolPlugin {
-    fn create_shell_page(&self) -> gtk4::Widget;
+    fn create_shell_page(&self, text_buffer: &gtk4::TextBuffer) -> gtk4::Widget;
 }
 
 /// Sub-trait for tools whose state IS a KDL [`ConfigDoc`]. Mirrors the

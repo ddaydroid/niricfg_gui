@@ -23,6 +23,7 @@
 //! the parsed doc AND the index, preventing a window where the shell has
 //! a `ConfigDoc` but no index.
 
+use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -32,6 +33,9 @@ use crate::core::semantic_path::{build_index, SemanticIndex};
 use crate::core::tool_plugin::{KdlBackedTool, ToolPlugin};
 use crate::core::validator::Validator;
 use crate::NiriValidator;
+
+#[cfg(feature = "gtk")]
+pub mod sections;
 
 /// Display name shown in the sidebar / tab bar.
 const NIRI_DISPLAY_NAME: &str = "Niri";
@@ -205,6 +209,10 @@ impl ToolPlugin for NiriTool {
 
     fn config_paths(&self) -> Vec<PathBuf> {
         vec![self.config_dir.join("config.kdl")]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn detect(&self, path: &Path) -> bool {

@@ -5,3 +5,6 @@
 
 pub mod niri;
 pub mod niri_validator;
+
+#[cfg(feature = "gtk")]
+pub mod niri_shell;

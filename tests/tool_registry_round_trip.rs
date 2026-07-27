@@ -1,5 +1,6 @@
 //! Integration test target for Wave 1 Step 4 `ToolRegistry`.
 
+use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use dotcfg_gui::{DynTool, Error, ExternalChangeAction, ToolPlugin, ToolRegistry, ValidationIssue};
@@ -58,6 +59,10 @@ impl ToolPlugin for TestPlugin {
     }
     fn api_version(&self) -> u32 {
         self.api_version
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
