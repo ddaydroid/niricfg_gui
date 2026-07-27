@@ -113,11 +113,9 @@ jobs:
           components: rust-src
           # cargo-fuzz 0.13.x hardcodes `--target x86_64-unknown-linux-musl`
           # in its inner cargo invocation (cit.
-          # cargo-fuzz-0.13.2/src/project.rs:143 calls `.arg("--target")`
-          # unconditionally). Without this `targets:` field the runner has
-          # no musl std library, so rustc errors with E0463 "can't find crate
-          # for `core`" verbatim from the failed CI log. Pre-install the std
-          # lib here so cargo-fuzz's hardcoded `--target` resolves cleanly.
+          # cargo-fuzz-0.13.2/src/project.rs:143 `.arg("--target")`). Without
+          # this `targets:` field the runner has no musl std library, so
+          # rustc errors with E0463 "can't find crate for `core`".
           targets: x86_64-unknown-linux-musl
       - name: Install GTK4/libadwaita dev packages
         run: |
@@ -134,10 +132,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run cargo fuzz on kdl_parser (30s budget)
         env:
-          # Disable static libc linking so libFuzzer's AddressSanitizer
-          # works. libfuzzer-sys's build.rs forces +crt-static by default;
-          # we override. (rustc report: "sanitizer is incompatible with
-          # statically linked libc, disable it using -C target-feature=-crt-static".)
+          # Disable static libc linking so libFuzzer's AddressSanitizer works.
+          # libfuzzer-sys's build.rs forces +crt-static by default; we override.
           RUSTFLAGS: "-C target-feature=-crt-static"
+          # Override the cc crate's target-specific compiler lookup for the
+          # x86_64-unknown-linux-musl target (cargo-fuzz's hardcoded target).
+          # libfuzzer-sys's build.rs looks up x86_64-linux-musl-g++ by default
+          # (warning: "Compiler family detection failed due to error: ToolNotFound:
+          # failed to find tool \"x86_64-linux-musl-g++\""). We redirect to the
+          # host's gcc/g++ (already installed by build-essential above) via
+          # rust's CC_<TARGET>/CXX_<TARGET> env-var convention (dashes in target
+          # triple become underscores). The cc crate reads these before falling
+          # back to the cross-prefix lookup.
+          CC_x86_64_unknown_linux_musl: gcc
+          CXX_x86_64_unknown_linux_musl: g++
         # Fails until fuzz/fuzz_targets/kdl_parser.rs is committed; this enforces Step 19/21 of the spec.
         run: cargo +nightly fuzz run kdl_parser -- -max_total_time=30
