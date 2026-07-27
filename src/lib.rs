@@ -19,6 +19,7 @@ pub use crate::core::tool_registry::ToolRegistry;
 pub use crate::core::undo_stack::{UndoCommand, UndoStack};
 pub use crate::core::validator::{BoxFuture, CannedValidator, NoopValidator, Validator};
 pub use crate::tools::niri::NiriTool;
+pub use crate::tools::niri_validator::NiriValidator;
 
 #[cfg(feature = "gtk")]
 pub use crate::core::tool_plugin::ToolPluginUi;

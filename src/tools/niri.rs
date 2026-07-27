@@ -30,6 +30,8 @@ use crate::core::config_loader::{load_config, ConfigDoc};
 use crate::core::error::{Error, ExternalChangeAction, ValidationIssue};
 use crate::core::semantic_path::{build_index, SemanticIndex};
 use crate::core::tool_plugin::{KdlBackedTool, ToolPlugin};
+use crate::core::validator::Validator;
+use crate::NiriValidator;
 
 /// Display name shown in the sidebar / tab bar.
 const NIRI_DISPLAY_NAME: &str = "Niri";
@@ -48,9 +50,14 @@ const NIRI_ID: &str = "niri";
 /// * `state` — Interior-mutable state protected by `Mutex`. Holds the
 ///   last-loaded `active_path`, the parsed `ConfigDoc`, and the
 ///   precomputed `SemanticIndex` (Wave 2 Step 8).
+/// * `validator` — Plugin-specific async validator. Defaults to
+///   [`NiriValidator`] which spawns `niri msg validate` via
+///   `async-process`. The shell's async loop calls this after each
+///   edit (with the configured debounce).
 pub struct NiriTool {
     config_dir: PathBuf,
     state: Mutex<NiriToolState>,
+    validator: Box<dyn Validator>,
 }
 
 /// Interior state for [`NiriTool`], guarded by `Mutex`.
@@ -77,8 +84,9 @@ impl NiriTool {
         }
     }
 
-    /// Construct a new `NiriTool` with default config directory resolution
-    /// and an empty initial state.
+    /// Construct a new `NiriTool` with default config directory resolution,
+    /// an empty initial state, and a [`NiriValidator`] wired as the
+    /// async validator.
     pub fn new() -> Self {
         Self {
             config_dir: Self::default_config_dir(),
@@ -87,6 +95,21 @@ impl NiriTool {
                 doc: None,
                 index: None,
             }),
+            validator: Box::new(NiriValidator::new()),
+        }
+    }
+
+    /// Construct a `NiriTool` with a custom validator (for tests that
+    /// need a [`CannedValidator`] or other non-default impl).
+    pub fn with_validator(validator: Box<dyn Validator>) -> Self {
+        Self {
+            config_dir: Self::default_config_dir(),
+            state: Mutex::new(NiriToolState {
+                active_path: None,
+                doc: None,
+                index: None,
+            }),
+            validator,
         }
     }
 
@@ -101,6 +124,14 @@ impl NiriTool {
     /// Access the currently-loaded `ConfigDoc`, if any.
     pub fn doc(&self) -> Option<ConfigDoc> {
         self.state.lock().unwrap().doc.clone()
+    }
+
+    /// Access the async validator used for KDL validation.
+    ///
+    /// The shell's async edit-loop uses this directly:
+    /// `tool.validator().validate_kdl(&text).await`.
+    pub fn validator(&self) -> &dyn Validator {
+        &*self.validator
     }
 }
 
@@ -151,16 +182,39 @@ impl ToolPlugin for NiriTool {
     }
 
     fn validate(&self) -> Result<Vec<ValidationIssue>, Error> {
-        // Wave 2 Step 9 will spawn `niri msg validate` here. For now,
-        // return an empty list so the shell's validator-loop has nothing
-        // to display.
-        Ok(Vec::new())
+        let state = self.state.lock().unwrap();
+        let doc = state
+            .doc
+            .as_ref()
+            .ok_or_else(|| Error::Plugin("NiriTool: nothing loaded to validate".to_string()))?;
+        let text = doc.to_string();
+        drop(state); // release mutex before the async block runs
+        async_std::task::block_on(self.validator.validate_kdl(&text))
     }
 
     fn apply_saved(&self) -> Result<(), Error> {
-        // Future: spawn `niri msg validate` via async-process and surface
-        // any validation issues to the user. For now, silently succeed.
-        Ok(())
+        // After a successful save, run the validator against the saved
+        // document so the shell can surface any post-save issues.
+        let state = self.state.lock().unwrap();
+        let doc = state
+            .doc
+            .as_ref()
+            .ok_or_else(|| Error::Plugin("NiriTool: nothing saved to apply".to_string()))?;
+        let text = doc.to_string();
+        drop(state);
+        let issues = async_std::task::block_on(self.validator.validate_kdl(&text))?;
+        if issues.is_empty() {
+            Ok(())
+        } else {
+            // Surface the first error (or the first issue) so the shell
+            // can display a post-save banner. A full issue list is
+            // available through the validator accessor.
+            Err(Error::Plugin(format!(
+                "{} issue(s) after save; first: {}",
+                issues.len(),
+                issues[0].message
+            )))
+        }
     }
 
     fn on_external_change(&self) -> ExternalChangeAction {
