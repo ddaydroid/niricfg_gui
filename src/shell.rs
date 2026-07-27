@@ -8,20 +8,19 @@
 //! Adw.ApplicationWindow
 //! └── Adw.NavigationSplitView
 //!     ├── Sidebar: Adw.ToolbarView
-//!     │   ├── HeaderBar ("Plugins")
+//!     │   ├── HeaderBar ("Plugins" + [Compare] toggle)
 //!     │   └── GtkListBox (one row per plugin)
 //!     └── Content: GtkBox (vertical)
 //!         ├── Adw.TabBar
 //!         └── Adw.TabView (one tab per plugin)
 //!             └── each tab: GtkBox (vertical)
 //!                 ├── Adw.Banner (validation results)
-//!                 ├── GtkBox (toolbar with diff toggle)
 //!                 └── GtkStack
 //!                     ├── ["editor"] GtkScrolledWindow
 //!                     │   └── GtkTextView (monospace, highlighted)
 //!                     └── ["diff"]   GtkPaned (horizontal)
-//!                         ├── original (read-only, highlighted)
-//!                         └── modified (read-only, highlighted)
+//!                         ├── line-numbered original (read-only)
+//!                         └── line-numbered modified (read-only)
 //! ```
 //!
 //! # Validation loop (Wave 2 Step 10)
@@ -42,10 +41,11 @@
 //! live GtkTextView with validation) and `"diff"` (a horizontal
 //! `GtkPaned` showing the original saved content versus the current
 //! editor text, with colour-coded line backgrounds for added/removed
-//! lines). A `ToggleButton` in the tab's toolbar switches the stack.
-//! The diff is computed lazily each time the user activates the toggle,
-//! comparing the current editor buffer against the snapshot taken on
-//! first edit.
+//! lines and line-number gutters on both sides). A global `Compare`
+//! toggle in the sidebar's HeaderBar switches all tabs between editor
+//! and diff mode simultaneously. The diff is computed eagerly for every
+//! tab when the toggle is activated, and stored per-tab so it persists
+//! across tab switches without recomputation.
 
 #![cfg(feature = "gtk")]
 
@@ -64,46 +64,119 @@ const GUTTER_ADDED: char = '+';
 const GUTTER_REMOVED: char = '-';
 const GUTTER_MODIFIED: char = '~';
 
-/// Build the side-by-side diff widget.
+/// Per-tab state needed by the global diff toggle.
+struct TabDiffState {
+    stack: gtk4::Stack,
+    editor_buf: gtk4::TextBuffer,
+    original_text: Rc<RefCell<String>>,
+    left_buf: gtk4::TextBuffer,
+    right_buf: gtk4::TextBuffer,
+    left_line_label: gtk4::Label,
+    right_line_label: gtk4::Label,
+}
+
+// ---------------------------------------------------------------------------
+// Line number gutter
+// ---------------------------------------------------------------------------
+
+/// Build one side of the diff view: a line-number gutter + a read-only
+/// monospace text view, scroll-synced.
 ///
-/// Returns the paned, the left (original) buffer, and the right (modified)
-/// buffer so callers can re-populate on demand.
-fn build_diff_widget() -> (gtk4::Paned, gtk4::TextBuffer, gtk4::TextBuffer) {
+/// Returns `(outer_box, text_view, line_label, left_buf, right_buf)` where
+/// `outer_box` goes into the GtkPaned, `text_view` is the editor,
+/// `line_label` is the line-number widget (for later updates), and the
+/// buffer belongs to the text view.
+fn build_diff_editor_side() -> (gtk4::Box, gtk4::TextView, gtk4::Label) {
+    // --- Line number gutter label ---
+    let line_label = gtk4::Label::new(None);
+    line_label.set_monospace(true);
+    line_label.set_xalign(1.0);
+    line_label.set_valign(gtk4::Align::Start);
+    line_label.set_margin_start(4);
+    line_label.set_margin_end(4);
+    line_label.set_width_chars(4);
+    line_label.set_text("1");
+
+    // Gutter sits in its own mini scrolled window (no scrollbars, no
+    // user-scrollable) so it can track the text view's vadjustment.
+    let gutter_sw = gtk4::ScrolledWindow::new();
+    gutter_sw.set_hexpand(false);
+    gutter_sw.set_vexpand(true);
+    gutter_sw.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::External);
+    gutter_sw.set_child(Some(&line_label));
+
+    // --- Text view (read-only, no wrap) ---
+    let text_view = gtk4::TextView::new();
+    text_view.set_monospace(true);
+    text_view.set_editable(false);
+    text_view.set_cursor_visible(false);
+    text_view.set_wrap_mode(gtk4::WrapMode::None);
+    text_view.set_margin_start(2);
+    text_view.set_margin_end(6);
+    text_view.set_margin_top(4);
+    text_view.set_margin_bottom(4);
+
+    // Editor sits in a normal scrollable window.
+    let editor_sw = gtk4::ScrolledWindow::new();
+    editor_sw.set_vexpand(true);
+    editor_sw.set_hexpand(true);
+    editor_sw.set_child(Some(&text_view));
+
+    // --- Sync: gutter follows editor scroll ---
+    let gutter_vadj = gutter_sw.vadjustment();
+    let editor_vadj = editor_sw.vadjustment();
+    editor_vadj.connect_value_changed(move |adj| {
+        gutter_vadj.set_value(adj.value());
+    });
+
+    // --- Combine into a horizontal box ---
+    let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    hbox.set_vexpand(true);
+    hbox.set_hexpand(true);
+    hbox.append(&gutter_sw);
+    hbox.append(&editor_sw);
+
+    (hbox, text_view, line_label)
+}
+
+/// Update the line-number label to show 1..N for N lines of buffer content.
+fn update_line_numbers(line_label: &gtk4::Label, buf: &gtk4::TextBuffer) {
+    let line_count = buf.line_count();
+    let nums: String = (1..=line_count)
+        .map(|n| format!("{n:>3}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    line_label.set_text(&nums);
+}
+
+// ---------------------------------------------------------------------------
+// Diff widget construction
+// ---------------------------------------------------------------------------
+
+/// Build the side-by-side diff widget with line numbers on both sides.
+///
+/// Returns the paned, the left (original) buffer, the right (modified)
+/// buffer, and both line labels (for later updates).
+struct DiffWidget {
+    paned: gtk4::Paned,
+    left_buf: gtk4::TextBuffer,
+    right_buf: gtk4::TextBuffer,
+    left_line_label: gtk4::Label,
+    right_line_label: gtk4::Label,
+}
+
+fn build_diff_widget() -> DiffWidget {
     let paned = gtk4::Paned::new(gtk4::Orientation::Horizontal);
     paned.set_wide_handle(true);
     paned.set_position(500);
 
-    // --- Left: original (read-only) ---
-    let left_sw = gtk4::ScrolledWindow::new();
-    left_sw.set_vexpand(true);
-    left_sw.set_hexpand(true);
+    // Left original side.
+    let (left_box, left_view, left_line_label) = build_diff_editor_side();
+    let left_buf = left_view.buffer();
 
-    let left_view = gtk4::TextView::new();
-    left_view.set_monospace(true);
-    left_view.set_editable(false);
-    left_view.set_cursor_visible(false);
-    left_view.set_wrap_mode(gtk4::WrapMode::None);
-    left_view.set_margin_start(6);
-    left_view.set_margin_end(6);
-    left_view.set_margin_top(4);
-    left_view.set_margin_bottom(4);
-    left_sw.set_child(Some(&left_view));
-
-    // --- Right: modified (read-only) ---
-    let right_sw = gtk4::ScrolledWindow::new();
-    right_sw.set_vexpand(true);
-    right_sw.set_hexpand(true);
-
-    let right_view = gtk4::TextView::new();
-    right_view.set_monospace(true);
-    right_view.set_editable(false);
-    right_view.set_cursor_visible(false);
-    right_view.set_wrap_mode(gtk4::WrapMode::None);
-    right_view.set_margin_start(6);
-    right_view.set_margin_end(6);
-    right_view.set_margin_top(4);
-    right_view.set_margin_bottom(4);
-    right_sw.set_child(Some(&right_view));
+    // Right modified side.
+    let (right_box, right_view, right_line_label) = build_diff_editor_side();
+    let right_buf = right_view.buffer();
 
     // --- Colour tags ---
     fn make_diff_tag(buf: &gtk4::TextBuffer, name: &str, bg: &str, fg: &str) -> gtk4::TextTag {
@@ -113,17 +186,19 @@ fn build_diff_widget() -> (gtk4::Paned, gtk4::TextBuffer, gtk4::TextBuffer) {
         tag
     }
 
-    let left_buf = left_view.buffer();
-    let right_buf = right_view.buffer();
-
     make_diff_tag(&right_buf, "diff_added", "#1b4a1b", "#a3be8c");
     make_diff_tag(&left_buf, "diff_removed", "#4a1b1b", "#bf616a");
     make_diff_tag(&left_buf, "diff_mod_left", "#3d3520", "#d08770");
     make_diff_tag(&right_buf, "diff_mod_right", "#3d3520", "#d08770");
 
-    // --- Sync vertical scrolling ---
-    let left_vadj = left_sw.vadjustment();
-    let right_vadj = right_sw.vadjustment();
+    // --- Sync vertical scrolling between left and right sides ---
+    // The editor_sw is the second child of each hbox. We need to reach
+    // into the hbox children to get the editor scrolled windows.
+    let left_editor_sw = find_editor_sw_in_side(&left_box);
+    let right_editor_sw = find_editor_sw_in_side(&right_box);
+
+    let left_vadj = left_editor_sw.vadjustment();
+    let right_vadj = right_editor_sw.vadjustment();
     let syncing = Rc::new(RefCell::new(false));
 
     let syncing_l = syncing.clone();
@@ -146,15 +221,43 @@ fn build_diff_widget() -> (gtk4::Paned, gtk4::TextBuffer, gtk4::TextBuffer) {
         }
     });
 
-    paned.set_start_child(Some(&left_sw));
-    paned.set_end_child(Some(&right_sw));
-    (paned, left_buf, right_buf)
+    paned.set_start_child(Some(&left_box));
+    paned.set_end_child(Some(&right_box));
+
+    DiffWidget {
+        paned,
+        left_buf,
+        right_buf,
+        left_line_label,
+        right_line_label,
+    }
 }
 
-/// Populate the two diff buffers from the original and modified text.
+/// Walk the children of a side's hbox to find the editor ScrolledWindow
+/// (second child). The first child is the gutter mini-scrolled-window.
+fn find_editor_sw_in_side(hbox: &gtk4::Box) -> gtk4::ScrolledWindow {
+    // We know children[0] = gutter_sw, children[1] = editor_sw.
+    // In GTK4, we can use observe_children() or first_child / next_sibling.
+    let child = hbox
+        .first_child()
+        .and_then(|gutter| gutter.next_sibling())
+        .expect("diff side hbox must have exactly 2 children");
+    child
+        .downcast::<gtk4::ScrolledWindow>()
+        .expect("second child must be ScrolledWindow")
+}
+
+// ---------------------------------------------------------------------------
+// Diff population
+// ---------------------------------------------------------------------------
+
+/// Populate the two diff buffers from the original and modified text, and
+/// update both line-number labels.
 fn populate_diff_view(
     left_buf: &gtk4::TextBuffer,
     right_buf: &gtk4::TextBuffer,
+    left_line_label: &gtk4::Label,
+    right_line_label: &gtk4::Label,
     original: &str,
     modified: &str,
 ) {
@@ -243,70 +346,96 @@ fn populate_diff_view(
     left_buf.set_text(&left_full);
     right_buf.set_text(&right_full);
 
-    // Apply colour tags.
-    let left_tt = left_buf.tag_table();
-    let right_tt = right_buf.tag_table();
+    // Update line numbers.
+    update_line_numbers(left_line_label, left_buf);
+    update_line_numbers(right_line_label, right_buf);
 
+    // Apply colour tags to left side.
+    let left_tt = left_buf.tag_table();
     for (i, state) in left_states.iter().enumerate() {
-        // Each line contributes: gutter(1) + space(1) + content + newline(1).
-        // sum(l.len() + 3) over preceding lines → start of current line.
-        // +2 skips the gutter and space to reach the content body.
         let line_start = left_lines[..i].iter().map(|l| l.len() + 3).sum::<usize>() + 2;
         let line_end = line_start + left_lines[i].len();
 
-        match *state {
-            "removed" => {
-                if let Some(tag) = left_tt.lookup("diff_removed") {
-                    let s = left_buf.iter_at_offset(line_start as i32);
-                    let e = left_buf.iter_at_offset(line_end as i32);
-                    left_buf.apply_tag(&tag, &s, &e);
-                }
+        let tag_name = match *state {
+            "removed" => Some("diff_removed"),
+            "modified" => Some("diff_mod_left"),
+            _ => None,
+        };
+        if let Some(name) = tag_name {
+            if let Some(tag) = left_tt.lookup(name) {
+                let s = left_buf.iter_at_offset(line_start as i32);
+                let e = left_buf.iter_at_offset(line_end as i32);
+                left_buf.apply_tag(&tag, &s, &e);
             }
-            "modified" => {
-                if let Some(tag) = left_tt.lookup("diff_mod_left") {
-                    let s = left_buf.iter_at_offset(line_start as i32);
-                    let e = left_buf.iter_at_offset(line_end as i32);
-                    left_buf.apply_tag(&tag, &s, &e);
-                }
-            }
-            _ => {}
         }
     }
 
+    // Apply colour tags to right side.
+    let right_tt = right_buf.tag_table();
     for (i, state) in right_states.iter().enumerate() {
-        // sum(l.len() + 3) over preceding lines → start of current line.
         let line_start = right_lines[..i].iter().map(|l| l.len() + 3).sum::<usize>() + 2;
         let line_end = line_start + right_lines[i].len();
 
-        match *state {
-            "added" => {
-                if let Some(tag) = right_tt.lookup("diff_added") {
-                    let s = right_buf.iter_at_offset(line_start as i32);
-                    let e = right_buf.iter_at_offset(line_end as i32);
-                    right_buf.apply_tag(&tag, &s, &e);
-                }
+        let tag_name = match *state {
+            "added" => Some("diff_added"),
+            "modified" => Some("diff_mod_right"),
+            _ => None,
+        };
+        if let Some(name) = tag_name {
+            if let Some(tag) = right_tt.lookup(name) {
+                let s = right_buf.iter_at_offset(line_start as i32);
+                let e = right_buf.iter_at_offset(line_end as i32);
+                right_buf.apply_tag(&tag, &s, &e);
             }
-            "modified" => {
-                if let Some(tag) = right_tt.lookup("diff_mod_right") {
-                    let s = right_buf.iter_at_offset(line_start as i32);
-                    let e = right_buf.iter_at_offset(line_end as i32);
-                    right_buf.apply_tag(&tag, &s, &e);
-                }
-            }
-            _ => {}
         }
     }
 }
 
-/// Build one editor tab page: banner + toolbar (diff toggle) + stack
-/// (editor ↔ diff view), with KDL highlighting and debounced async
-/// validation loop.
+/// Refresh a single tab's diff buffers from its current editor text.
+fn refresh_tab_diff(state: &TabDiffState) {
+    let modified = state
+        .editor_buf
+        .text(
+            &state.editor_buf.start_iter(),
+            &state.editor_buf.end_iter(),
+            false,
+        )
+        .unwrap_or_default()
+        .to_string();
+    let original = state.original_text.borrow().clone();
+    populate_diff_view(
+        &state.left_buf,
+        &state.right_buf,
+        &state.left_line_label,
+        &state.right_line_label,
+        &original,
+        &modified,
+    );
+}
+
+/// Switch a tab's stack to "editor" or "diff" based on the global toggle.
+fn set_tab_mode(state: &TabDiffState, show_diff: bool) {
+    state
+        .stack
+        .set_visible_child_name(if show_diff { "diff" } else { "editor" });
+}
+
+// ---------------------------------------------------------------------------
+// Editor tab construction
+// ---------------------------------------------------------------------------
+
+/// Build one editor tab page: banner + stack (editor ↔ diff view), with KDL
+/// highlighting and debounced async validation loop.
 ///
-/// Returns the container widget, the banner, and the text view (so
-/// callers can load content or attach external state).
+/// Does NOT include a per-tab diff toggle — that lives in the sidebar's
+/// HeaderBar as a global toggle.
+///
+/// Returns the container widget, the banner, the text view, and the diff
+/// state struct so `run_shell` can collect it for the global toggle.
 fn build_editor_page(
     tool_index: usize,
     tools: Rc<Vec<DynTool>>,
+    tab_diff_state: &mut Vec<TabDiffState>,
 ) -> (gtk4::Box, adw::Banner, gtk4::TextView) {
     // --- Banner (validation results) ---
     let banner = adw::Banner::new();
@@ -334,10 +463,8 @@ fn build_editor_page(
     // --- Original text snapshot (used for diff) ---
     let original_text: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
 
-    // --- Diff view (lazily built; store buffers for later refresh) ---
-    let (diff_paned, left_buf, right_buf) = build_diff_widget();
-    let diff_bufs: Rc<RefCell<(gtk4::TextBuffer, gtk4::TextBuffer)>> =
-        Rc::new(RefCell::new((left_buf, right_buf)));
+    // --- Diff view ---
+    let diff_widget = build_diff_widget();
 
     // --- Stack: editor ↔ diff ---
     let stack = gtk4::Stack::new();
@@ -345,50 +472,18 @@ fn build_editor_page(
     stack.set_vexpand(true);
     stack.set_hexpand(true);
 
-    // Page 0: editor.
     stack.add_titled(&scrolled, Some("editor"), "Editor");
-    // Page 1: diff view.
-    stack.add_titled(&diff_paned, Some("diff"), "Diff");
+    stack.add_titled(&diff_widget.paned, Some("diff"), "Diff");
 
-    // --- Toolbar row (diff toggle) ---
-    let toolbar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    toolbar.set_margin_top(4);
-    toolbar.set_margin_bottom(4);
-    toolbar.set_margin_start(8);
-    toolbar.set_margin_end(8);
-    toolbar.set_spacing(8);
-
-    let diff_toggle = gtk4::ToggleButton::with_label("Compare");
-    diff_toggle.set_tooltip_text(Some("Show side-by-side diff against saved version"));
-
-    // Spacer to push toggle to the right.
-    let spacer = gtk4::Label::new(None);
-    toolbar.set_halign(gtk4::Align::Fill);
-    toolbar.append(&spacer);
-    toolbar.append(&diff_toggle);
-
-    // Wire the diff toggle: on activation, refresh the diff and switch pages.
-    let stack_clone = stack.clone();
-    let tv_buf = text_view.buffer();
-    let tv_orig = original_text.clone();
-    let diff_bufs_c = diff_bufs.clone();
-
-    diff_toggle.connect_toggled(move |btn| {
-        if btn.is_active() {
-            // Snapshot modified text and refresh diff.
-            let modified = tv_buf
-                .text(&tv_buf.start_iter(), &tv_buf.end_iter(), false)
-                .unwrap_or_default()
-                .to_string();
-            let original = tv_orig.borrow().clone();
-
-            let (ref left, ref right) = *diff_bufs_c.borrow();
-            populate_diff_view(left, right, &original, &modified);
-
-            stack_clone.set_visible_child_name("diff");
-        } else {
-            stack_clone.set_visible_child_name("editor");
-        }
+    // Push TabDiffState so the global toggle can manage this tab.
+    tab_diff_state.push(TabDiffState {
+        stack: stack.clone(),
+        editor_buf: text_view.buffer(),
+        original_text: original_text.clone(),
+        left_buf: diff_widget.left_buf,
+        right_buf: diff_widget.right_buf,
+        left_line_label: diff_widget.left_line_label,
+        right_line_label: diff_widget.right_line_label,
     });
 
     // Connect buffer changed: on first edit, snapshot original text.
@@ -406,11 +501,10 @@ fn build_editor_page(
         }
     });
 
-    // --- Layout: banner + toolbar + stack ---
+    // --- Layout: banner + stack ---
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     vbox.set_vexpand(true);
     vbox.append(&banner);
-    vbox.append(&toolbar);
     vbox.append(&stack);
 
     // --- Debounce state (validation loop) ---
@@ -491,12 +585,18 @@ fn build_editor_page(
     (vbox, banner, text_view)
 }
 
+// ---------------------------------------------------------------------------
+// Shell entrypoint
+// ---------------------------------------------------------------------------
+
 /// Launch the dotcfg-gui GUI shell.
 ///
 /// `plugins` is the list of `Box<dyn ToolPlugin>` built by `main`. The
 /// shell wraps them into a sidebar (plugin list) + tab view (per-plugin
 /// editor), each tab carrying its own debounced async validator loop,
-/// KDL syntax highlighting, and a side-by-side diff view.
+/// KDL syntax highlighting, and a side-by-side diff view with line
+/// numbers. A global `Compare` toggle in the sidebar's HeaderBar
+/// switches all tabs between editor and diff mode simultaneously.
 ///
 /// A `ToolRegistry` is not used here because `Box<dyn ToolPlugin>` does
 /// not implement `Clone` (dyn traits don't carry Clone), so the plugins
@@ -505,6 +605,7 @@ fn build_editor_page(
 pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
     let app = adw::Application::new(Some("com.d3t0x.niricfg"), Default::default());
     let tools = Rc::new(plugins);
+    let tab_diff_states: Rc<RefCell<Vec<TabDiffState>>> = Rc::new(RefCell::new(Vec::new()));
 
     app.connect_activate(move |app| {
         let window = adw::ApplicationWindow::new(app);
@@ -521,6 +622,14 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         let sidebar = adw::ToolbarView::new();
         let sidebar_header = adw::HeaderBar::new();
         sidebar_header.set_title_widget(Some(&gtk4::Label::new(Some("Plugins"))));
+
+        // Global diff toggle in the sidebar's titlebar.
+        let diff_toggle = gtk4::ToggleButton::with_label("Compare");
+        diff_toggle.set_tooltip_text(Some(
+            "Show side-by-side diff against saved version for all tabs",
+        ));
+        sidebar_header.set_end_widget(Some(&diff_toggle));
+
         sidebar.add_top_bar(&sidebar_header);
 
         let plugin_list = gtk4::ListBox::new();
@@ -543,24 +652,26 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         window.set_content(Some(&split_view));
 
         // --- Populate sidebar rows + editor tabs ---
-        for (i, tool) in tools.as_slice().iter().enumerate() {
-            // Sidebar row.
-            let row = gtk4::ListBoxRow::new();
-            let label = gtk4::Label::new(Some(tool.display_name()));
-            label.set_margin_start(12);
-            label.set_margin_end(12);
-            label.set_margin_top(6);
-            label.set_margin_bottom(6);
-            label.set_halign(gtk4::Align::Start);
-            row.set_child(Some(&label));
-            plugin_list.append(&row);
+        {
+            let mut states = tab_diff_states.borrow_mut();
+            for (i, tool) in tools.as_slice().iter().enumerate() {
+                let row = gtk4::ListBoxRow::new();
+                let label = gtk4::Label::new(Some(tool.display_name()));
+                label.set_margin_start(12);
+                label.set_margin_end(12);
+                label.set_margin_top(6);
+                label.set_margin_bottom(6);
+                label.set_halign(gtk4::Align::Start);
+                row.set_child(Some(&label));
+                plugin_list.append(&row);
 
-            // Editor tab.
-            let (editor_widget, _banner, _text_view) = build_editor_page(i, tools.clone());
-            tab_view.append(&editor_widget, tool.display_name());
+                let (editor_widget, _banner, _text_view) =
+                    build_editor_page(i, tools.clone(), &mut *states);
+                tab_view.append(&editor_widget, tool.display_name());
+            }
         }
 
-        // Wire sidebar row activation -> tab selection.
+        // Wire sidebar row activation → tab selection.
         let tab_view_clone = tab_view.clone();
         plugin_list.connect_row_activated(move |_list, row| {
             let idx = row.index();
@@ -575,6 +686,19 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         if let Some(page) = tab_view.nth_page(0) {
             tab_view.set_selected_page(&page);
         }
+
+        // --- Wire the global diff toggle ---
+        let states = tab_diff_states.clone();
+        diff_toggle.connect_toggled(move |btn| {
+            let show_diff = btn.is_active();
+            let states = states.borrow();
+            for state in states.iter() {
+                if show_diff {
+                    refresh_tab_diff(state);
+                }
+                set_tab_mode(state, show_diff);
+            }
+        });
 
         window.present();
     });
