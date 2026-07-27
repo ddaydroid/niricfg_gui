@@ -199,7 +199,7 @@ impl HighlightTags {
             buf.create_tag(Some(name), &[]).expect("create_tag failed")
         }
 
-        let mut tags = Self {
+        let tags = Self {
             comment: make_tag(buffer, "kdl_comment"),
             keyword: make_tag(buffer, "kdl_keyword"),
             string: make_tag(buffer, "kdl_string"),

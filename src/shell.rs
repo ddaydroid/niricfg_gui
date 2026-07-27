@@ -624,7 +624,7 @@ fn handle_external_change(
     // Find the tab whose config_path matches the changed path.
     let tab_idx = states
         .iter()
-        .position(|s| s.config_path.as_ref().map_or(false, |p| p == changed_path));
+        .position(|s| s.config_path.as_ref().is_some_and(|p| p == changed_path));
 
     let idx = match tab_idx {
         Some(i) => i,
