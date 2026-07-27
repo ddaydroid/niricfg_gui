@@ -58,7 +58,6 @@ use std::time::Duration;
 
 // Re-export libadwaita under the shorter `adw` name used throughout
 // this module (the underlying crate is `libadwaita` in 0.7.x).
-use gtk4::pango;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
@@ -104,10 +103,17 @@ struct TabDiffState {
 fn build_diff_editor_side() -> (gtk4::Box, gtk4::TextView, gtk4::Label) {
     // --- Line number gutter label ---
     let line_label = gtk4::Label::new(None);
-    // set_monospace is not available on Label in gtk4 0.9.x;
-    // use font description to achieve the same effect.
-    let font_desc = pango::FontDescription::from_string("monospace");
-    line_label.set_font_desc(Some(&font_desc));
+    // set_monospace / set_font_desc are unavailable in gtk4 0.9.x, so
+    // use CSS to set monospace font for the line-number gutter.
+    {
+        let css_provider = gtk4::CssProvider::new();
+        css_provider
+            .load_from_string("* { font-family: monospace; }")
+            .expect("inline CSS is valid");
+        line_label
+            .style_context()
+            .add_provider(&css_provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
     line_label.set_xalign(1.0);
     line_label.set_valign(gtk4::Align::Start);
     line_label.set_margin_start(4);
@@ -418,7 +424,6 @@ fn refresh_tab_diff(state: &TabDiffState) {
             &state.editor_buf.end_iter(),
             false,
         )
-        .unwrap_or_default()
         .to_string();
     let original = state.original_text.borrow().clone();
     populate_diff_view(
@@ -547,10 +552,7 @@ fn build_editor_page(
         // Snapshot text.
         let start = buf.start_iter();
         let end = buf.end_iter();
-        let text: String = buf
-            .text(&start, &end, false)
-            .map(|g| g.to_string())
-            .unwrap_or_default();
+        let text: String = buf.text(&start, &end, false).to_string();
 
         let timer_tools = tools_clone.clone();
         let timer_banner = banner_clone.clone();
@@ -643,7 +645,6 @@ fn handle_external_change(
             &state.editor_buf.end_iter(),
             false,
         )
-        .unwrap_or_default()
         .to_string();
     let original = state.original_text.borrow();
     let is_dirty = current != *original;
@@ -730,7 +731,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         diff_toggle.set_tooltip_text(Some(
             "Show side-by-side diff against saved version for all tabs",
         ));
-        sidebar_header.set_end_widget(Some(&diff_toggle));
+        sidebar_header.pack_end(&diff_toggle);
 
         sidebar.add_top_bar(&sidebar_header);
 
@@ -738,7 +739,9 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         plugin_list.set_selection_mode(gtk4::SelectionMode::Single);
         sidebar.set_content(Some(&plugin_list));
 
-        split_view.set_sidebar(Some(&sidebar));
+        // set_sidebar requires an IsA<NavigationPage> wrapper.
+        let sidebar_page = adw::NavigationPage::new(&sidebar, "Plugins");
+        split_view.set_sidebar(Some(&sidebar_page));
 
         // --- Content: tab bar + tab view ---
         let tab_bar = adw::TabBar::new();
