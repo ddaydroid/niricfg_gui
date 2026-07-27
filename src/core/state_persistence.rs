@@ -63,7 +63,10 @@ pub fn load_shell_window_state() -> ShellWindowState {
     }
 
     let kf = KeyFile::new();
-    if kf.load_from_file(&path, glib::KeyFileFlags::None).is_err() {
+    if kf
+        .load_from_file(&path, glib::KeyFileFlags::empty())
+        .is_err()
+    {
         return ShellWindowState::default();
     }
 

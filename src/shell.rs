@@ -836,6 +836,89 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
             main_stack.set_visible_child_name("first-run");
         }
 
+        // --- Start the async file watcher for external-edit detection ---
+        // Using a channel-based approach: the watcher thread sends PathBuf
+        // events through an mpsc channel; a glib timeout on the GTK main
+        // thread polls the receiver and dispatches to handle_external_change.
+        // This avoids sharing GTK (non-Send) state across thread boundaries.
+        //
+        // The closure below is reusable so it can be called both at initial
+        // startup (when configs already exist) AND after the first-run
+        // "Generate Default Config" button creates a file. It is defined
+        // here before the button handler so it's in scope for the closure.
+        let is_saving: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+        let _is_saving = is_saving;
+
+        let start_watcher = {
+            let tools = tools.clone();
+            let tab_diff_states = tab_diff_states.clone();
+
+            move || {
+                let watch_paths: Vec<PathBuf> = tools
+                    .as_slice()
+                    .iter()
+                    .flat_map(|t| t.config_paths())
+                    .filter(|p| p.exists())
+                    .collect();
+
+                if watch_paths.is_empty() {
+                    return;
+                }
+
+                let (tx, rx) = mpsc::channel::<PathBuf>();
+                std::thread::spawn(move || {
+                    async_std::task::block_on(async move {
+                        let watcher = match FileWatcher::watch(watch_paths).await {
+                            Ok(w) => w,
+                            Err(e) => {
+                                eprintln!("dotcfg-gui: file watcher start failed: {e}");
+                                return;
+                            }
+                        };
+
+                        loop {
+                            if let Some(path) = watcher.next_event().await {
+                                if tx.send(path).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    });
+                });
+
+                let watcher_debounce_src: Rc<RefCell<Option<glib::SourceId>>> =
+                    Rc::new(RefCell::new(None));
+                let watcher_last_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+                let poll_ds = watcher_debounce_src.clone();
+                let poll_lp = watcher_last_path.clone();
+                let poll_st = tab_diff_states.clone();
+
+                glib::timeout_add_local(Duration::from_millis(100), move || {
+                    while let Ok(path) = rx.try_recv() {
+                        if let Some(id) = poll_ds.borrow_mut().take() {
+                            id.remove();
+                        }
+                        *poll_lp.borrow_mut() = Some(path);
+
+                        let lp = poll_lp.clone();
+                        let st = poll_st.clone();
+                        let src = glib::timeout_add_local(Duration::from_millis(500), move || {
+                            let path_opt = lp.borrow().clone();
+                            if let Some(ref p) = path_opt {
+                                handle_external_change(&st, p);
+                            }
+                            glib::ControlFlow::Break
+                        });
+                        *poll_ds.borrow_mut() = Some(src);
+                    }
+                    glib::ControlFlow::Continue
+                });
+            }
+        };
+
+        // Start the watcher if any config exists on startup.
+        start_watcher();
+
         // --- Wire the Generate Default Config button ---
         let gen_tools = tools.clone();
         let gen_tab_view = tab_view.clone();
@@ -925,104 +1008,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 state.window = window.downgrade();
                 state.config_path = tool.config_paths().iter().find(|p| p.exists()).cloned();
             }
-        } // --- Start the async file watcher for external-edit detection ---
-          // Using a channel-based approach: the watcher thread sends PathBuf
-          // events through an mpsc channel; a glib timeout on the GTK main
-          // thread polls the receiver and dispatches to handle_external_change.
-          // This avoids sharing GTK (non-Send) state across thread boundaries.
-        let watch_paths: Vec<PathBuf> = tools
-            .as_slice()
-            .iter()
-            .flat_map(|t| t.config_paths())
-            .filter(|p| p.exists())
-            .collect();
-
-        // --- Start the async file watcher for external-edit detection ---
-        // Using a channel-based approach: the watcher thread sends PathBuf
-        // events through an mpsc channel; a glib timeout on the GTK main
-        // thread polls the receiver and dispatches to handle_external_change.
-        // This avoids sharing GTK (non-Send) state across thread boundaries.
-        //
-        // The closure below is reusable so it can be called both at initial
-        // startup (when configs already exist) AND after the first-run
-        // "Generate Default Config" button creates a file.
-        let is_saving: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-        let _is_saving = is_saving;
-
-        let start_watcher = {
-            let tools = tools.clone();
-            let tab_diff_states = tab_diff_states.clone();
-
-            move || {
-                let watch_paths: Vec<PathBuf> = tools
-                    .as_slice()
-                    .iter()
-                    .flat_map(|t| t.config_paths())
-                    .filter(|p| p.exists())
-                    .collect();
-
-                if watch_paths.is_empty() {
-                    return;
-                }
-
-                let (tx, rx) = mpsc::channel::<PathBuf>();
-                // Spawn the file watcher thread. It forwards events via
-                // the mpsc sender — no shared GTK state crosses threads.
-                std::thread::spawn(move || {
-                    async_std::task::block_on(async move {
-                        let watcher = match FileWatcher::watch(watch_paths).await {
-                            Ok(w) => w,
-                            Err(e) => {
-                                eprintln!("dotcfg-gui: file watcher start failed: {e}");
-                                return;
-                            }
-                        };
-
-                        loop {
-                            if let Some(path) = watcher.next_event().await {
-                                if tx.send(path).is_err() {
-                                    return;
-                                }
-                            }
-                        }
-                    });
-                });
-
-                // On the GTK main thread, poll the mpsc receiver with a
-                // 500ms external-change debounce: on each event, cancel
-                // the pending timer and start a new one.
-                let watcher_debounce_src: Rc<RefCell<Option<glib::SourceId>>> =
-                    Rc::new(RefCell::new(None));
-                let watcher_last_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
-                let poll_ds = watcher_debounce_src.clone();
-                let poll_lp = watcher_last_path.clone();
-                let poll_st = tab_diff_states.clone();
-
-                glib::timeout_add_local(Duration::from_millis(100), move || {
-                    while let Ok(path) = rx.try_recv() {
-                        if let Some(id) = poll_ds.borrow_mut().take() {
-                            id.remove();
-                        }
-                        *poll_lp.borrow_mut() = Some(path);
-
-                        let lp = poll_lp.clone();
-                        let st = poll_st.clone();
-                        let src = glib::timeout_add_local(Duration::from_millis(500), move || {
-                            let path_opt = lp.borrow().clone();
-                            if let Some(ref p) = path_opt {
-                                handle_external_change(&st, p);
-                            }
-                            glib::ControlFlow::Break
-                        });
-                        *poll_ds.borrow_mut() = Some(src);
-                    }
-                    glib::ControlFlow::Continue
-                });
-            }
-        };
-
-        // Start the watcher if any config exists on startup.
-        start_watcher();
+        }
 
         // --- Wire dirty shutdown intercept (Wave 5 Step 17) ---
         // Intercept close-request when any tab has unsaved edits.
@@ -1094,7 +1080,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                     }
                 });
 
-                dialog.present(win);
+                dialog.present(Some(win));
                 glib::Propagation::Stop
             });
         }
