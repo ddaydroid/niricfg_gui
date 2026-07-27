@@ -907,6 +907,71 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
             });
         }
 
+        // --- Wire dirty shutdown intercept (Wave 5 Step 17) ---
+        // Intercept close-request when any tab has unsaved edits.
+        {
+            let cr_states = tab_diff_states.clone();
+            window.connect_close_request(move |win| {
+                let states = cr_states.borrow();
+                let any_dirty = states.iter().any(|s| {
+                    let current = s
+                        .editor_buf
+                        .text(&s.editor_buf.start_iter(), &s.editor_buf.end_iter(), false)
+                        .to_string();
+                    let original = s.original_text.borrow();
+                    current != *original
+                });
+
+                if !any_dirty {
+                    return glib::Propagation::Proceed;
+                }
+
+                let dialog = adw::AlertDialog::new(
+                    Some("Unsaved Changes"),
+                    Some("You have unsaved changes. What would you like to do?"),
+                );
+                dialog.add_response("cancel", "_Cancel");
+                dialog.add_response("discard", "_Discard");
+                dialog.add_response("save", "_Save");
+                dialog.set_default_response(Some("cancel"));
+                dialog.set_close_response("cancel");
+
+                let st = cr_states.clone();
+                let win_weak = win.downgrade();
+                dialog.connect_response(None, move |_dlg, response| {
+                    if response == "save" {
+                        // Write each dirty tab's content to its config path.
+                        let states = st.borrow();
+                        for state in states.iter() {
+                            let current = state
+                                .editor_buf
+                                .text(
+                                    &state.editor_buf.start_iter(),
+                                    &state.editor_buf.end_iter(),
+                                    false,
+                                )
+                                .to_string();
+                            let original = state.original_text.borrow();
+                            if current != *original {
+                                if let Some(ref path) = state.config_path {
+                                    let _ = std::fs::write(path, &current);
+                                    *state.original_text.borrow_mut() = current;
+                                }
+                            }
+                        }
+                    }
+                    if response != "cancel" {
+                        if let Some(win) = win_weak.upgrade() {
+                            win.destroy();
+                        }
+                    }
+                });
+
+                dialog.present(win);
+                glib::Propagation::Stop
+            });
+        }
+
         window.present();
     });
 
