@@ -12,7 +12,6 @@ use crate::core::error::Error;
 use crate::core::tool_plugin::DynTool;
 
 /// In-process registry of active plugins, ordered by insertion.
-#[derive(Default)]
 pub struct ToolRegistry {
     tools: Vec<DynTool>,
 }
@@ -41,10 +40,11 @@ impl ToolRegistry {
         Some(self.tools.remove(pos))
     }
 
-    /// Iterator over registered plugins in insertion order. Borrowed,
-    /// so callers can't mutate the registry while iterating.
-    pub fn iter(&self) -> impl Iterator<Item = &DynTool> {
-        self.tools.iter()
+    /// Slice of registered plugins in insertion order. Returns `&[DynTool]`
+    /// so callers can use slice methods directly — `.len()`, `.first()`,
+    /// `.is_empty()`, `.iter()`, or `for t in registry.iter() { ... }`.
+    pub fn iter(&self) -> &[DynTool] {
+        &self.tools
     }
 
     /// Find the plugin whose `id()` exactly matches `tool_id`, if any.
