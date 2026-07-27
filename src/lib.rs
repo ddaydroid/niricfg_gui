@@ -8,6 +8,7 @@ pub mod core;
 #[cfg(feature = "gtk")]
 pub mod shell;
 
+pub use crate::core::config_loader::{load_config, ConfigDoc};
 pub use crate::core::error::{Error, ExternalChangeAction, Severity, ValidationIssue};
 pub use crate::core::tool_plugin::{DynTool, ToolPlugin};
 pub use crate::core::undo_stack::{UndoCommand, UndoStack};
