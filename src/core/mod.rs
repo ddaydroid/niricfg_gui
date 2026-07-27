@@ -2,6 +2,7 @@
 
 pub mod config_loader;
 pub mod error;
+pub mod file_watcher;
 pub mod tool_plugin;
 pub mod tool_registry;
 pub mod undo_stack;

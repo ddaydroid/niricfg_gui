@@ -12,6 +12,9 @@ pub enum Error {
 
     #[error("plugin error: {0}")]
     Plugin(String),
+
+    #[error("file watcher error: {0}")]
+    FileWatcher(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

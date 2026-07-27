@@ -21,7 +21,7 @@ gtk = ["dep:gtk4", "dep:libadwaita", "dep:glib", "dep:gio"]
 kdl = "6"
 async-std = { version = "1.13", features = ["attributes"] }
 async-process = "2"
-notify = "6"
+notify = "7"
 thiserror = "1"
 
 # GTK-gated (only built with --features gtk)
