@@ -927,49 +927,50 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         let gen_win = window.downgrade();
         let gen_start_watcher = start_watcher.clone();
         gen_button.connect_clicked(move |_btn| {
-            for tool in gen_tools.as_slice().iter() {
-                match tool.generate_default_config() {
-                    Ok(path) => {
-                        // Load the generated config into the tool.
-                        let _ = tool.load(&path);
+            let Some(tool) = gen_tools.as_slice().first() else {
+                eprintln!("dotcfg-gui: no tools registered for config generation");
+                return;
+            };
+            match tool.generate_default_config() {
+                Ok(path) => {
+                    // Load the generated config into the tool.
+                    let _ = tool.load(&path);
 
-                        let initial_text = std::fs::read_to_string(&path).unwrap_or_default();
+                    let initial_text = std::fs::read_to_string(&path).unwrap_or_default();
 
-                        let mut states = gen_tab_diff.borrow_mut();
-                        states.clear();
+                    let mut states = gen_tab_diff.borrow_mut();
+                    states.clear();
 
-                        let (editor_widget, _banner, _text_view) =
-                            build_editor_page(0, gen_tools.clone(), &mut states, &initial_text);
+                    let (editor_widget, _banner, _text_view) =
+                        build_editor_page(0, gen_tools.clone(), &mut states, &initial_text);
 
-                        // Rebuild the tab view: close existing pages.
-                        while gen_tab_view.n_pages() > 0 {
-                            let page = gen_tab_view.nth_page(0);
-                            gen_tab_view.close_page(&page);
-                        }
-                        let page = gen_tab_view.append(&editor_widget);
-                        page.set_title(tool.display_name());
-
-                        // Update window refs + config path.
-                        if let Some(win) = gen_win.upgrade() {
-                            for state in states.iter_mut() {
-                                state.window = win.downgrade();
-                                state.config_path = Some(path.clone());
-                            }
-                        }
-
-                        // Select the first tab and switch to editor view.
+                    // Close any existing tab pages before adding the new one.
+                    if gen_tab_view.n_pages() > 0 {
                         let page = gen_tab_view.nth_page(0);
-                        gen_tab_view.set_selected_page(&page);
-                        gen_stack.set_visible_child_name("editor");
+                        gen_tab_view.close_page(&page);
+                    }
+                    let page = gen_tab_view.append(&editor_widget);
+                    page.set_title(tool.display_name());
 
-                        // Start the file watcher for the newly-created config.
-                        gen_start_watcher();
+                    // Update window refs + config path.
+                    if let Some(win) = gen_win.upgrade() {
+                        for state in states.iter_mut() {
+                            state.window = win.downgrade();
+                            state.config_path = Some(path.clone());
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("dotcfg-gui: default config generation failed: {e}");
-                    }
+
+                    // Select the first tab and switch to editor view.
+                    let page = gen_tab_view.nth_page(0);
+                    gen_tab_view.set_selected_page(&page);
+                    gen_stack.set_visible_child_name("editor");
+
+                    // Start the file watcher for the newly-created config.
+                    gen_start_watcher();
                 }
-                break; // only try the first tool
+                Err(e) => {
+                    eprintln!("dotcfg-gui: default config generation failed: {e}");
+                }
             }
         });
 
