@@ -12,7 +12,7 @@
 //!      `binds { Mod+Return { spawn "alacritty" } Mod+Q { spawn
 //!      "kill-window" } }` produces 5 entries (1 parent + 2 children
 //!      + 2 grandchildren: `binds`, `binds/Mod+Return`,
-//!      `binds/Mod+Return/spawn`, `binds/Mod+Q`, `binds/Mod+Q/spawn`).
+//!        `binds/Mod+Return/spawn`, `binds/Mod+Q`, `binds/Mod+Q/spawn`).
 //!   3. **`index_lookup_api_returns_span_for_indexed_path`** —
 //!      `SemanticIndex::lookup(["system"])` returns the source
 //!      (`offset`, `len`) byte-range; lookup of a genuinely

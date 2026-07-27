@@ -14,7 +14,8 @@ fn main() {
 
     #[cfg(feature = "gtk")]
     {
-        if let Err(e) = dotcfg_gui::run_shell(vec![]) {
+        let tools: Vec<dotcfg_gui::DynTool> = vec![Box::new(dotcfg_gui::NiriTool::new())];
+        if let Err(e) = dotcfg_gui::run_shell(tools) {
             eprintln!("dotcfg-gui: shell error: {}", e);
             std::process::exit(1);
         }
