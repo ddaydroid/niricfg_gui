@@ -17,7 +17,7 @@
 #[test]
 fn lib_root_reexports_resolve() {
     use dotcfg_gui::{
-        DynTool, Error, ExternalChangeAction, Severity, ToolPlugin, UndoCommand, ValidationIssue,
+        DynTool, Error, ExternalChangeAction, Severity, UndoCommand, ValidationIssue,
     };
 
     // The `Option<...>::None` literal never constructs a value, so we don't
