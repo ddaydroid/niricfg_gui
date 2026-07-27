@@ -14,7 +14,6 @@
 #![cfg(feature = "gtk")]
 
 use adw::prelude::*;
-use adw::traits::*;
 use libadwaita as adw;
 
 use crate::core::tool_plugin::ToolPluginUi;

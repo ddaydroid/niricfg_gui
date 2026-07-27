@@ -13,6 +13,7 @@
 //! }
 //! ```
 
+use adw::prelude::*;
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 use libadwaita as adw;
 use std::str::FromStr;
@@ -80,7 +81,7 @@ pub fn build_output_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
             .unwrap_or(1.0);
 
         let scale_adj = gtk4::Adjustment::new(scale_val, 0.25, 5.0, 0.25, 0.5, 0.0);
-        let scale_row = adw::SpinRow::new(&scale_adj, 0.1, 2);
+        let scale_row = adw::SpinRow::new(Some(&scale_adj), 0.1, 2);
         scale_row.set_title("Scale");
         scale_row.set_tooltip_text(Some("Display scale factor (0.25–5.0)"));
         monitor_row.add_row(&scale_row);

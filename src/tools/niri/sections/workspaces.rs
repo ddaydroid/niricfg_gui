@@ -7,6 +7,7 @@
 //! preferred-workspace-for-output "HDMI-A-1" 2
 //! ```
 
+use adw::prelude::*;
 use kdl::{KdlDocument, KdlEntry, KdlValue};
 use libadwaita as adw;
 use std::str::FromStr;
@@ -89,7 +90,7 @@ pub fn build_workspaces_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer)
 
         // Workspace number SpinRow
         let ws_adj = gtk4::Adjustment::new(entry.ws_num, 1.0, 20.0, 1.0, 1.0, 0.0);
-        let ws_num_row = adw::SpinRow::new(&ws_adj, 1.0, 0);
+        let ws_num_row = adw::SpinRow::new(Some(&ws_adj), 1.0, 0);
         ws_num_row.set_title("Workspace");
         ws_num_row.set_tooltip_text(Some("Workspace number (1–20)"));
         ws_row.add_row(&ws_num_row);

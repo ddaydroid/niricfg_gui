@@ -11,6 +11,7 @@
 //! comments on parse). Users who need comment preservation can use the
 //! "Raw" text editor tab instead.
 
+use adw::prelude::*;
 use kdl::{KdlDocument, KdlEntry, KdlValue};
 use libadwaita as adw;
 use std::str::FromStr;
@@ -49,13 +50,13 @@ pub fn build_input_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
         get_kdl_str(&init_doc, &["input", "keyboard", "xkb-layout"]).unwrap_or_default();
 
     let repeat_delay_adj = gtk4::Adjustment::new(init_repeat_delay, 100.0, 2000.0, 25.0, 50.0, 0.0);
-    let repeat_delay_row = adw::SpinRow::new(&repeat_delay_adj, 1.0, 0);
+    let repeat_delay_row = adw::SpinRow::new(Some(&repeat_delay_adj), 1.0, 0);
     repeat_delay_row.set_title("Repeat Delay (ms)");
     repeat_delay_row.set_tooltip_text(Some("Milliseconds before key repeat starts (100–2000)"));
     keyboard_row.add_row(&repeat_delay_row);
 
     let repeat_rate_adj = gtk4::Adjustment::new(init_repeat_rate, 10.0, 200.0, 1.0, 5.0, 0.0);
-    let repeat_rate_row = adw::SpinRow::new(&repeat_rate_adj, 1.0, 0);
+    let repeat_rate_row = adw::SpinRow::new(Some(&repeat_rate_adj), 1.0, 0);
     repeat_rate_row.set_title("Repeat Rate (keys/s)");
     repeat_rate_row.set_tooltip_text(Some("Key repeat rate in characters per second (10–200)"));
     keyboard_row.add_row(&repeat_rate_row);

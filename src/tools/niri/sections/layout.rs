@@ -18,6 +18,7 @@
 //! }
 //! ```
 
+use adw::prelude::*;
 use kdl::{KdlDocument, KdlValue};
 use libadwaita as adw;
 use std::str::FromStr;
@@ -43,7 +44,7 @@ pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
         4.0,
         0.0,
     );
-    let gap_row = adw::SpinRow::new(&gap_adj, 1.0, 0);
+    let gap_row = adw::SpinRow::new(Some(&gap_adj), 1.0, 0);
     gap_row.set_title("Gap (px)");
     gap_row.set_tooltip_text(Some("Window gap in pixels (0–64)"));
     group.add(&gap_row);
@@ -59,7 +60,7 @@ pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
         .unwrap_or_else(|| "#cccccc".to_string());
 
     let fw_adj = gtk4::Adjustment::new(init_fw, 0.0, 20.0, 1.0, 2.0, 0.0);
-    let fw_row = adw::SpinRow::new(&fw_adj, 1.0, 0);
+    let fw_row = adw::SpinRow::new(Some(&fw_adj), 1.0, 0);
     fw_row.set_title("Width (px)");
     focus_row.add_row(&fw_row);
 
@@ -92,7 +93,7 @@ pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
         .unwrap_or_else(|| "#555555".to_string());
 
     let bw_adj = gtk4::Adjustment::new(init_bw, 0.0, 20.0, 1.0, 2.0, 0.0);
-    let bw_row = adw::SpinRow::new(&bw_adj, 1.0, 0);
+    let bw_row = adw::SpinRow::new(Some(&bw_adj), 1.0, 0);
     bw_row.set_title("Width (px)");
     border_row.add_row(&bw_row);
 
