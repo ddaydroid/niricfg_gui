@@ -146,6 +146,18 @@ jobs:
         with:
           tool: cargo-fuzz@0.13.2
       - uses: Swatinem/rust-cache@v2
+      - name: Verify kdl_parser fuzz target is registered
+        run: |
+          set -e
+          echo "=== cargo fuzz list ==="
+          TARGETS=$(cd fuzz && cargo +nightly fuzz list)
+          echo "$TARGETS"
+          if echo "$TARGETS" | grep -q '^kdl_parser$'; then
+            echo "  OK: kdl_parser target is registered"
+          else
+            echo "  FAIL: kdl_parser target NOT found in fuzz target list"
+            exit 1
+          fi
       - name: Run cargo fuzz on kdl_parser (30s budget)
         env:
           # Disable static libc linking so libFuzzer's AddressSanitizer works
