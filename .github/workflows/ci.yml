@@ -111,12 +111,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
-          # cargo-fuzz 0.13.x hardcodes `--target x86_64-unknown-linux-musl`
-          # in its inner cargo invocation (cit.
-          # cargo-fuzz-0.13.2/src/project.rs:143 `.arg("--target")`). Without
-          # this `targets:` field the runner has no musl std library, so
-          # rustc errors with E0463 "can't find crate for `core`".
-          targets: x86_64-unknown-linux-musl
       - name: Install GTK4/libadwaita dev packages
         run: |
           sudo apt-get update
@@ -132,19 +126,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run cargo fuzz on kdl_parser (30s budget)
         env:
-          # Disable static libc linking so libFuzzer's AddressSanitizer works.
-          # libfuzzer-sys's build.rs forces +crt-static by default; we override.
+          # Disable static libc linking so libFuzzer's AddressSanitizer works
+          # (libfuzzer-sys's build.rs forces +crt-static by default; rustc
+          # error: "sanitizer is incompatible with statically linked libc,
+          # disable it using -C target-feature=-crt-static"). This flag is
+          # independent of the fuzz target triple.
           RUSTFLAGS: "-C target-feature=-crt-static"
-          # Override the cc crate's target-specific compiler lookup for the
-          # x86_64-unknown-linux-musl target (cargo-fuzz's hardcoded target).
-          # libfuzzer-sys's build.rs looks up x86_64-linux-musl-g++ by default
-          # (warning: "Compiler family detection failed due to error: ToolNotFound:
-          # failed to find tool \"x86_64-linux-musl-g++\""). We redirect to the
-          # host's gcc/g++ (already installed by build-essential above) via
-          # rust's CC_<TARGET>/CXX_<TARGET> env-var convention (dashes in target
-          # triple become underscores). The cc crate reads these before falling
-          # back to the cross-prefix lookup.
-          CC_x86_64_unknown_linux_musl: gcc
-          CXX_x86_64_unknown_linux_musl: g++
-        # Fails until fuzz/fuzz_targets/kdl_parser.rs is committed; this enforces Step 19/21 of the spec.
-        run: cargo +nightly fuzz run kdl_parser -- -max_total_time=30
+        # Fails until fuzz/fuzz_targets/kdl_parser.rs is committed; enforces
+        # Step 19/21 of the spec. Use --target=x86_64-unknown-linux-gnu to build
+        # for the runner's native triple, avoiding cargo-fuzz 0.13.x's default
+        # musl target (whose std lib + cross-prefix gcc/g++ aren't on the
+        # ubuntu-24.04 runner — ASan link fails with "DSO missing from command
+        # line" if musl is used; saw on commit 46d876a). cargo-fuzz honors
+        # --target <triple> via src/options.rs + src/project.rs:143.
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu kdl_parser -- -max_total_time=30
