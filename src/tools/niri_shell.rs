@@ -42,6 +42,18 @@ fn build_shell_page(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Wi
     let output_group = sections::output::build_output_section(tool, text_buffer);
     vbox.append(&output_group);
 
+    // Layout section
+    let layout_group = sections::layout::build_layout_section(tool, text_buffer);
+    vbox.append(&layout_group);
+
+    // Workspaces section
+    let workspaces_group = sections::workspaces::build_workspaces_section(tool, text_buffer);
+    vbox.append(&workspaces_group);
+
+    // Layer Rules section
+    let layer_rules_group = sections::layer_rules::build_layer_rules_section(tool, text_buffer);
+    vbox.append(&layer_rules_group);
+
     clamp.set_child(Some(&vbox));
 
     let scrolled = gtk4::ScrolledWindow::new();

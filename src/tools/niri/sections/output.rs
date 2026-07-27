@@ -18,6 +18,8 @@ use std::str::FromStr;
 
 use crate::tools::niri::NiriTool;
 
+use super::get_buffer_text;
+
 /// Build the "Output" section widget tree.
 ///
 /// Iterates over all `output` nodes in the ConfigDoc and creates an
@@ -204,10 +206,4 @@ fn modify_output_mode(doc: &mut KdlDocument, monitor: &str, mode: &str) {
             }
         }
     }
-}
-
-/// Read all text from a buffer as a String.
-fn get_buffer_text(buf: &gtk4::TextBuffer) -> String {
-    buf.text(&buf.start_iter(), &buf.end_iter(), false)
-        .to_string()
 }

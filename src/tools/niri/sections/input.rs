@@ -11,121 +11,12 @@
 //! comments on parse). Users who need comment preservation can use the
 //! "Raw" text editor tab instead.
 
-use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
+use kdl::{KdlDocument, KdlEntry, KdlValue};
 use std::str::FromStr;
 
 use crate::tools::niri::NiriTool;
 
-// ---------------------------------------------------------------------------
-// KDL tree helpers — navigate and modify a KDL document by dotted path
-// ---------------------------------------------------------------------------
-
-/// Read a string value from a leaf node at the given path
-/// (e.g. `["input", "keyboard", "xkb-layout"]`).
-fn get_kdl_str(doc: &KdlDocument, path: &[&str]) -> Option<String> {
-    let mut current = doc;
-    for (i, &segment) in path.iter().enumerate() {
-        let node = current
-            .nodes()
-            .iter()
-            .find(|n| n.name().value() == segment)?;
-        if i == path.len() - 1 {
-            return node.entries().first().and_then(|e| match e.value() {
-                KdlValue::String(s) => Some(s.clone()),
-                KdlValue::Identifier(s) => Some(s.clone()),
-                KdlValue::Decimal(n) => Some(n.to_string()),
-                KdlValue::Base10(n) => Some(n.to_string()),
-                _ => None,
-            });
-        }
-        current = node.children().as_ref()?;
-    }
-    None
-}
-
-/// Read a boolean value from a leaf node.
-fn get_kdl_bool(doc: &KdlDocument, path: &[&str]) -> Option<bool> {
-    get_kdl_str(doc, path).map(|s| s == "true" || s == "1" || s == "yes")
-}
-
-/// Read an f64 value from a leaf node.
-fn get_kdl_f64(doc: &KdlDocument, path: &[&str]) -> Option<f64> {
-    let mut current = doc;
-    for (i, &segment) in path.iter().enumerate() {
-        let node = current
-            .nodes()
-            .iter()
-            .find(|n| n.name().value() == segment)?;
-        if i == path.len() - 1 {
-            return node.entries().first().and_then(|e| match e.value() {
-                KdlValue::Decimal(n) => Some(*n),
-                KdlValue::Base10(n) => Some(*n as f64),
-                KdlValue::String(s) => s.parse::<f64>().ok(),
-                _ => None,
-            });
-        }
-        current = node.children().as_ref()?;
-    }
-    None
-}
-
-/// Navigate the KDL tree by path indices (not references) to set a leaf's
-/// first entry to an f64 value. Returns the re-serialised document text.
-fn set_kdl_value(doc: &mut KdlDocument, path: &[&str], value: &KdlValue) {
-    // Walk down using indices to avoid borrow-checker conflicts.
-    let mut node_indices: Vec<usize> = Vec::new();
-    let mut current = doc;
-
-    for &segment in path {
-        let pos = current
-            .nodes()
-            .iter()
-            .position(|n| n.name().value() == segment);
-        match pos {
-            Some(idx) => {
-                node_indices.push(idx);
-                // If not the last segment, step into children.
-                if node_indices.len() < path.len() {
-                    if let Some(children) = current.nodes()[idx].children() {
-                        current = children;
-                    } else {
-                        // Path doesn't exist — create the remaining segments.
-                        // For now, just return without modifying.
-                        return;
-                    }
-                }
-            }
-            None => return, // Path doesn't exist
-        }
-    }
-
-    // Now apply using the collected indices.
-    let mut cur = doc;
-    let last = path.len() - 1;
-    for (depth, &idx) in node_indices.iter().enumerate() {
-        if depth == last {
-            // Leaf node — set the first entry.
-            let node = &mut cur.nodes_mut()[idx];
-            let entry = match value {
-                KdlValue::Decimal(f) => KdlEntry::new(KdlValue::Decimal(*f)),
-                KdlValue::String(s) => KdlEntry::new(KdlValue::String(s.clone())),
-                _ => KdlEntry::new(value.clone()),
-            };
-            if node.entries().is_empty() {
-                node.entries_mut().push(entry);
-            } else {
-                node.entries_mut()[0] = entry;
-            }
-        } else if let Some(children) = cur.nodes_mut()[idx].children_mut() {
-            cur = children;
-        }
-    }
-}
-
-/// Convenience: set an f64 value.
-fn set_kdl_f64(doc: &mut KdlDocument, path: &[&str], value: f64) {
-    set_kdl_value(doc, path, &KdlValue::Decimal(value));
-}
+use super::{get_buffer_text, get_kdl_bool, get_kdl_f64, get_kdl_str, set_kdl_f64, set_kdl_value};
 
 // ---------------------------------------------------------------------------
 // Input section builder
@@ -296,10 +187,4 @@ pub fn build_input_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
     });
 
     group.upcast()
-}
-
-/// Read all text from a buffer as a String.
-fn get_buffer_text(buf: &gtk4::TextBuffer) -> String {
-    buf.text(&buf.start_iter(), &buf.end_iter(), false)
-        .to_string()
 }
