@@ -1,0 +1,22 @@
+[package]
+name = "dotcfg-gui-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+kdl = "6"
+dotcfg-gui = { path = ".." }
+
+[[bin]]
+name = "kdl_parser"
+path = "fuzz_targets/kdl_parser.rs"
+test = false
+doc = false
