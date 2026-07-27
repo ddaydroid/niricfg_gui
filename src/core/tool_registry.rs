@@ -68,3 +68,14 @@ impl ToolRegistry {
             .unwrap_or(false)
     }
 }
+
+/// `Default::default()` is a zero-tool alias for `ToolRegistry::new()`. Implemented
+/// manually (not via `#[derive(Default)]`) so callers see the canonical `new()`
+/// as the only constructor and `Default` exists purely for trait interop.
+/// Satisfies `clippy::new_without_default` without re-deriving `Default`,
+/// preserving the earlier decision that the explicit `new()` is canonical.
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
