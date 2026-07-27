@@ -9,6 +9,7 @@ pub mod core;
 pub mod shell;
 
 pub use crate::core::config_loader::{load_config, ConfigDoc};
+pub use crate::core::config_writer::save_config;
 pub use crate::core::error::{Error, ExternalChangeAction, Severity, ValidationIssue};
 pub use crate::core::file_watcher::FileWatcher;
 pub use crate::core::tool_plugin::{DynTool, ToolPlugin};

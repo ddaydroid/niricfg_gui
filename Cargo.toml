@@ -22,6 +22,7 @@ kdl = "6"
 async-std = { version = "1.13", features = ["attributes"] }
 async-process = "2"
 notify = "7"
+tempfile = "3"
 thiserror = "1"
 
 # GTK-gated (only built with --features gtk)
