@@ -66,6 +66,7 @@ use crate::core::diff::line_diff;
 use crate::core::error::Error;
 use crate::core::file_watcher::FileWatcher;
 use crate::core::kdl_highlighter;
+use crate::core::state_persistence::{load_shell_window_state, save_shell_window_state};
 use crate::DynTool;
 
 /// Character displayed in the gutter for each diff status.
@@ -713,9 +714,15 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
     let tab_diff_states: Rc<RefCell<Vec<TabDiffState>>> = Rc::new(RefCell::new(Vec::new()));
 
     app.connect_activate(move |app| {
+        // --- Load persisted window state ---
+        let saved = load_shell_window_state();
+
         let window = adw::ApplicationWindow::new(app);
-        window.set_default_size(1000, 700);
+        window.set_default_size(saved.width, saved.height);
         window.set_title(Some("dotcfg-gui — niri config editor"));
+
+        // --- Main stack: editor view overlay with first-run status page ---
+        let main_stack = gtk4::Stack::new();
 
         // --- Navigation split view: sidebar | content ---
         let split_view = adw::NavigationSplitView::new();
@@ -758,7 +765,36 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         // set_content also requires an IsA<NavigationPage> wrapper.
         let content_page = adw::NavigationPage::new(&content_box, "Editor");
         split_view.set_content(Some(&content_page));
-        window.set_content(Some(&split_view));
+
+        main_stack.add_titled(&split_view, Some("editor"), "Editor");
+
+        // --- First-run status page ---
+        let status_page = adw::StatusPage::new();
+        status_page.set_title("Welcome to dotcfg-gui");
+        status_page.set_description(Some(
+            "No configuration file found. \
+             Generate a default config to get started editing.",
+        ));
+        status_page.set_icon_name(Some("preferences-system"));
+
+        let gen_button = gtk4::Button::with_label("Generate Default Config");
+        gen_button.set_halign(gtk4::Align::Center);
+        gen_button.set_valign(gtk4::Align::Start);
+        gen_button.set_margin_top(24);
+        gen_button.add_css_class("suggested-action");
+        gen_button.add_css_class("pill");
+        status_page.set_child(Some(&gen_button));
+
+        main_stack.add_titled(&status_page, Some("first-run"), "First Run");
+
+        window.set_content(Some(&main_stack));
+
+        // Check whether any tool has an existing config, then show the
+        // appropriate view.
+        let has_any_config = tools
+            .as_slice()
+            .iter()
+            .any(|t| t.config_paths().iter().any(|p| p.exists()));
 
         // --- Populate sidebar rows + editor tabs ---
         {
@@ -792,6 +828,63 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 page.set_title(tool.display_name());
             }
         }
+
+        // --- Show editor or first-run depending on config presence ---
+        if has_any_config {
+            main_stack.set_visible_child_name("editor");
+        } else {
+            main_stack.set_visible_child_name("first-run");
+        }
+
+        // --- Wire the Generate Default Config button ---
+        let gen_tools = tools.clone();
+        let gen_tab_view = tab_view.clone();
+        let gen_tab_diff = tab_diff_states.clone();
+        let gen_stack = main_stack.clone();
+        let gen_win = window.downgrade();
+        gen_button.connect_clicked(move |_btn| {
+            for tool in gen_tools.as_slice().iter() {
+                match tool.generate_default_config() {
+                    Ok(path) => {
+                        // Load the generated config into the tool.
+                        let _ = tool.load(&path);
+
+                        let initial_text = std::fs::read_to_string(&path).unwrap_or_default();
+
+                        let mut states = gen_tab_diff.borrow_mut();
+                        states.clear();
+
+                        let (editor_widget, _banner, _text_view) =
+                            build_editor_page(0, gen_tools.clone(), &mut states, &initial_text);
+
+                        // Rebuild the tab view: close existing pages.
+                        while gen_tab_view.n_pages() > 0 {
+                            let page = gen_tab_view.nth_page(0);
+                            gen_tab_view.close_page(&page);
+                        }
+                        let page = gen_tab_view.append(&editor_widget);
+                        page.set_title(tool.display_name());
+
+                        // Update window refs + config path.
+                        if let Some(win) = gen_win.upgrade() {
+                            for state in states.iter_mut() {
+                                state.window = win.downgrade();
+                                state.config_path = Some(path.clone());
+                            }
+                        }
+
+                        // Select the first tab and switch to editor view.
+                        let page = gen_tab_view.nth_page(0);
+                        gen_tab_view.set_selected_page(&page);
+                        gen_stack.set_visible_child_name("editor");
+                    }
+                    Err(e) => {
+                        eprintln!("dotcfg-gui: default config generation failed: {e}");
+                    }
+                }
+                break; // only try the first tool
+            }
+        });
 
         // Wire sidebar row activation → tab selection.
         let tab_view_clone = tab_view.clone();
@@ -909,8 +1002,10 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
 
         // --- Wire dirty shutdown intercept (Wave 5 Step 17) ---
         // Intercept close-request when any tab has unsaved edits.
+        // Also persists window state on clean-dismissal.
         {
             let cr_states = tab_diff_states.clone();
+            let cr_tools = tools.clone();
             window.connect_close_request(move |win| {
                 let states = cr_states.borrow();
                 let any_dirty = states.iter().any(|s| {
@@ -923,6 +1018,10 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 });
 
                 if !any_dirty {
+                    // Save window state before proceeding.
+                    let (w, h) = win.default_size();
+                    let last_tool = cr_tools.as_slice().first().map(|t| t.id());
+                    save_shell_window_state(w.max(1), h.max(1), last_tool);
                     return glib::Propagation::Proceed;
                 }
 
@@ -938,6 +1037,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
 
                 let st = cr_states.clone();
                 let win_weak = win.downgrade();
+                let save_tools = cr_tools.clone();
                 dialog.connect_response(None, move |_dlg, response| {
                     if response == "save" {
                         // Write each dirty tab's content to its config path.
@@ -962,6 +1062,9 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                     }
                     if response != "cancel" {
                         if let Some(win) = win_weak.upgrade() {
+                            let (w, h) = win.default_size();
+                            let last_tool = save_tools.as_slice().first().map(|t| t.id());
+                            save_shell_window_state(w.max(1), h.max(1), last_tool);
                             win.destroy();
                         }
                     }

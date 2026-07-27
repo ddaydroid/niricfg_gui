@@ -67,6 +67,19 @@ pub trait ToolPlugin: Send + Sync {
     fn validator(&self) -> Option<&dyn Validator> {
         None
     }
+
+    /// Generate a default config file at the first config path and return
+    /// the written path.
+    ///
+    /// The default impl returns `Error::Plugin(…)` — plugins that support
+    /// auto-generated baseline configs (like the first-run UX) override
+    /// this to write a sensible default and return `Ok(path)`.
+    fn generate_default_config(&self) -> Result<PathBuf, Error> {
+        Err(Error::Plugin(format!(
+            "{}: auto-generation not supported",
+            self.display_name()
+        )))
+    }
 }
 
 /// Convenience alias for the registry's element type.

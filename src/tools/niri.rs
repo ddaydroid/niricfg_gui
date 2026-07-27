@@ -133,6 +133,59 @@ impl NiriTool {
     pub fn validator(&self) -> &dyn Validator {
         &*self.validator
     }
+
+    /// Write a minimal but functional niri config to the default path
+    /// (`~/.config/niri/config.kdl`) and return the path of the written
+    /// file.
+    ///
+    /// Creates the `config_dir` parent directory if it does not exist.
+    /// Errors are `Error::Io(_)` — permission denied, read-only
+    /// filesystem, disk full, etc.
+    pub fn generate_default_config(&self) -> Result<PathBuf, Error> {
+        let path = self.config_dir.join("config.kdl");
+        let content = r##"input {
+    keyboard {
+        repeat-delay 250
+        repeat-rate 33
+    }
+    touchpad {
+        tap-to-click true
+        natural-scroll true
+    }
+}
+
+layout {
+    gap 8
+    focus-ring {
+        width 2
+        active-color "#5294e2"
+    }
+}
+
+spawn-at-startup "/usr/libexec/polkit-gnome-authentication-agent-1"
+
+binds {
+    Mod+Return spawn "foot"
+    Mod+Q close-window
+    Mod+T toggle-floating
+    Mod+Shift+F switch-preset-workspace-forward
+    Mod+Shift+B switch-preset-workspace-backward
+    Mod+1 focus-workspace 1
+    Mod+2 focus-workspace 2
+    Mod+3 focus-workspace 3
+    Mod+4 focus-workspace 4
+    Mod+Shift+1 move-column-to-workspace 1
+    Mod+Shift+2 move-column-to-workspace 2
+    Mod+Shift+3 move-column-to-workspace 3
+    Mod+Shift+4 move-column-to-workspace 4
+    Mod+Shift+Left move-column-left
+    Mod+Shift+Right move-column-right
+}
+"##;
+        std::fs::create_dir_all(&self.config_dir)?;
+        std::fs::write(&path, content)?;
+        Ok(path)
+    }
 }
 
 impl Default for NiriTool {
@@ -227,6 +280,10 @@ impl ToolPlugin for NiriTool {
 
     fn validator(&self) -> Option<&dyn Validator> {
         Some(&*self.validator)
+    }
+
+    fn generate_default_config(&self) -> Result<PathBuf, Error> {
+        NiriTool::generate_default_config(self)
     }
 }
 

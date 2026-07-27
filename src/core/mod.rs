@@ -15,3 +15,6 @@ pub mod validator;
 
 #[cfg(feature = "gtk")]
 pub mod kdl_highlighter;
+
+#[cfg(feature = "gtk")]
+pub mod state_persistence;
