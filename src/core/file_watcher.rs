@@ -8,37 +8,41 @@
 //!
 //! # Architecture
 //!
-//! - The `notify::RecommendedWatcher` itself owns the OS inotify backend.
-//!   We hold it inside `FileWatcher::_watcher` so its lifetime matches the
-//!   receive loop. Dropping `FileWatcher` closes the watcher → the upstream
-//!   `std::sync::mpsc::Receiver` disconnects → the `spawn_blocking` bridge
-//!   exits → `next_event` then returns `None`.
-//! - `notify`'s recommended watcher emits events on a `std::sync::mpsc::Sender`.
-//!   An `async_std::task::spawn_blocking` task bridges that synchronous
-//!   channel into our async-std channel: it `recv()`s each event off the
-//!   std channel on a dedicated OS thread (won't starve async-std's worker
-//!   pool), and `blocking_send`s the path into the async-std channel for
-//!   downstream consumption.
+//! - The `notify::RecommendedWatcher` owns the OS inotify backend; we
+//!   hold it inside `FileWatcher::_watcher` so its lifetime matches the
+//!   receive loop. Dropping `FileWatcher` closes the watcher → the
+//!   upstream `std::sync::mpsc::Receiver` disconnects → the bridge task
+//!   detects the disconnect on next poll → exits → `next_event` then
+//!   returns `None`.
+//! - The bridge is a single async green-thread that polls
+//!   `std::sync::mpsc::Receiver<notify::Result<notify::Event>>` via
+//!   `try_recv()`, forwarding each path into the async-std channel with
+//!   `tx.send().await`. Empty polls yield via `async_std::task::yield_now`
+//!   (cheap — the scheduler relaxes for one tick).
 //!
-//! # Trade-offs
+//! # Why poll-and-yield instead of spawn_blocking + blocking_send?
 //!
-//! - **One `PathBuf` per `next_event`**: events that carry multiple paths
-//!   produce multiple consecutive `next_event` calls (in path order).
-//!   Sufficient for Wave 3's external-change wiring; Wave 2's batched UI
-//!   can drain a burst.
-//! - **Bridging tone**: notify is fundamentally synchronous
-//!   (`std::sync::mpsc::recv()` blocks). The separate blocking thread is
-//!   necessary because `recv()` would otherwise park on an async-std
-//!   worker, blocking every other green-thread on that scheduler thread.
-//! - **Bounded channel (cap 64)**: a relink storm (e.g. `git checkout`
-//!   inside the watched dir) won't grow memory unbounded; the oldest
-//!   in-flight events stay in the watcher's std mpsc buffer instead.
+//! async-std's `Sender<T>` only exposes async `send()` — there is **no**
+//! `blocking_send` analogue. The viable alternatives:
+//! a) `spawn_blocking` the recv loop and call
+//!    `async_std::task::block_on(tx.send(p))` per send — wasteful per-call
+//!    executor setup.
+//! b) Hold a green-thread on `mpsc::recv()` directly — works in practice
+//!    because async-std's lazy worker expansion handles it, but formally
+//!    unsound (a held worker can starve sibling green-threads).
+//! c) Poll with `try_recv` + `yield_now` (chosen here). Idle cost is one
+//!    OS-poll per scheduler tick (~1 ms); event cost is one send per
+//!    `notify::Event`. Bounded channel at 64 caps memory under storms.
 //!
-//! # Future migrations
+//! # Field drop order
 //!
-//! - Wave 2 may want batched events (`Option<Vec<PathBuf>>` per call) — at
-//!   that point we'd swap the channel payload for a small `Vec`.
-//! - Wave 3 may want a debouncer (notify-debouncer-full) —
+//! `rx` is declared first so when `FileWatcher` drops, `rx` releases the
+//! only consumer first; the bridge's `tx.send().await` then returns
+//! `Err(SendError)` and the bridge exits cleanly. `_watcher` then drops,
+//! the notify handler closure is dropped, `raw_tx` is dropped, and the
+//! bridge's `try_recv()` returns `Err(Disconnected)` — already-exited
+//! task is a no-op. So either drop order is observably equivalent; we
+//! keep `rx` first as future-maintainer documentation.
 
 use std::path::PathBuf;
 
@@ -46,13 +50,11 @@ use notify::{recommended_watcher, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::core::error::Error;
 
-/// Async file-system watcher. Drop to stop watching (the channel closes
-/// and `next_event` returns `None` on the next call).
+/// Async file-system watcher. Drop to stop watching (the async-std
+/// channel closes and `next_event` returns `None` on the next call).
 pub struct FileWatcher {
     rx: async_std::channel::Receiver<PathBuf>,
-    // Held to keep the OS inotify backend alive; dropped when
-    // `FileWatcher` drops → closes the upstream notify channel → lets the
-    // `spawn_blocking` bridge exit.
+    // Held to keep the OS inotify backend alive.
     _watcher: RecommendedWatcher,
 }
 
@@ -60,14 +62,19 @@ impl FileWatcher {
     /// Begin watching each entry in `paths` (non-recursive: hooks to the
     /// path itself, not its children). Returns a `FileWatcher` whose
     /// `next_event` yields one `PathBuf` per path per `notify::Event`.
+    ///
+    /// Runbook: paths must exist at the moment of `watch()`; absent
+    /// paths return `Err(Error::FileWatcher(_))` from the underlying
+    /// notify backend. Directories pass in non-recursive mode, so child
+    /// file events are NOT reported.
     pub async fn watch(paths: Vec<PathBuf>) -> Result<Self, Error> {
-        // Bounded async-std channel: cap 64. Bridges backpressure without
-        // unbounded growth in pathological storm scenarios.
+        // Bounded async-std channel (cap 64): backpressure observable
+        // without unbounded memory in pathological storms.
         let (tx, rx) = async_std::channel::bounded::<PathBuf>(64);
 
         // `notify`'s recommended watcher takes a synchronous handler; we
         // give it a closure that pushes events into a std mpsc channel
-        // that the bridge below drains.
+        // that the bridge below polls.
         let (raw_tx, raw_rx) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
 
         let mut watcher = recommended_watcher(move |res| {
@@ -84,31 +91,35 @@ impl FileWatcher {
                 .map_err(|e| Error::FileWatcher(format!("watch({path:?}): {e}")))?;
         }
 
-        // `spawn_blocking` parks the closure on a dedicated blocking
-        // thread (`async-std`'s blocking pool) so `raw_rx.recv()` (which
-        // blocks on the std mpsc) doesn't tie up the async-std worker
-        // pool. `tx.blocking_send` is OK because we're on that blocking
-        // thread, not a green-thread.
-        async_std::task::spawn_blocking(move || {
-            while let Ok(res) = raw_rx.recv() {
-                match res {
-                    Ok(event) => {
+        // Bridge: poll `raw_rx` on a green-thread. Per-event cost is
+        // one `tx.send().await`; idle cost is one `yield_now()` per
+        // scheduler tick. The async-std channel's bounded `64` provides
+        // backpressure if the consumer falls behind.
+        async_std::task::spawn(async move {
+            loop {
+                match raw_rx.try_recv() {
+                    Ok(Ok(event)) => {
                         for p in event.paths {
-                            if tx.blocking_send(p).is_err() {
-                                // Receiver (FileWatcher) dropped; bail.
+                            // Returns Err if the consumer (FileWatcher)
+                            // has been dropped. Bridge exits cleanly.
+                            if tx.send(p).await.is_err() {
                                 return;
                             }
                         }
                     }
-                    Err(_) => {
-                        // notify errors are typically transient races
-                        // (e.g. file removed mid-watch). Silently drop so
-                        // the bridge stays alive for subsequent events.
+                    Ok(Err(_)) | Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        // Either notify reported a transient error or
+                        // there are no pending events; yield to the
+                        // scheduler so other green-threads can run.
+                        async_std::task::yield_now().await;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        // Notify watcher was dropped (the FileWatcher's
+                        // `_watcher` field was dropped). Bridge exit.
+                        return;
                     }
                 }
             }
-            // raw_rx disconnected -> notify watcher dropped -> no more
-            // events incoming. Bridge exit.
         });
 
         Ok(Self {
@@ -118,12 +129,10 @@ impl FileWatcher {
     }
 
     /// Await the next path-change event, or `None` if the watcher has
-    /// been dropped (the async-std channel closed).
+    /// been dropped (the async-std channel closed). Maps the underlying
+    /// `Result<PathBuf, RecvError>` to `Option<PathBuf>` per the public
+    /// API contract.
     pub async fn next_event(&self) -> Option<PathBuf> {
-        self.rx.recv().await
+        self.rx.recv().await.ok()
     }
 }
-
-// `RecommendedWatcher` is inotify-backed on Linux; on macOS FSEvents; on
-// Windows ReadDirectoryChangesW. The bridge above is platform-agnostic
-// because it operates entirely above notify's runtime level.
