@@ -48,7 +48,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@cargo-audit
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - run: cargo audit
 
   test:
@@ -67,7 +69,9 @@ jobs:
             xvfb \
             pkg-config \
             build-essential
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
       - uses: Swatinem/rust-cache@v2
       - name: Unit tests (no GTK)
         run: cargo nextest run --no-default-features
@@ -90,7 +94,9 @@ jobs:
             xvfb \
             pkg-config \
             build-essential
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
       - uses: Swatinem/rust-cache@v2
       - name: Property tests with PROPTEST_CASES=2000
         env:
@@ -114,7 +120,9 @@ jobs:
             libgtksourceview-5-dev \
             pkg-config \
             build-essential
-      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - uses: Swatinem/rust-cache@v2
       - name: Run cargo fuzz on kdl_parser (30s budget)
         # Fails until fuzz/fuzz_targets/kdl_parser.rs is committed; this enforces Step 19/21 of the spec.
