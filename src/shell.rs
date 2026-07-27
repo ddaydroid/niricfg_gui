@@ -666,13 +666,13 @@ fn handle_external_change(
         dialog.set_close_response("ignore");
 
         let st = tab_states.clone();
-        let new_txt = new_text.clone();
         dialog.connect_response(None, move |_dlg, response| {
             if response == "reload" {
                 let states = st.borrow();
                 if let Some(s) = states.get(idx) {
-                    s.editor_buf.set_text(&new_txt);
-                    *s.original_text.borrow_mut() = new_txt;
+                    let txt = new_text.clone();
+                    s.editor_buf.set_text(&txt);
+                    *s.original_text.borrow_mut() = txt;
                 }
             }
             // "ignore": do nothing, keep editor state intact
@@ -785,7 +785,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 let (editor_widget, _banner, _text_view) =
                     build_editor_page(i, tools.clone(), &mut *states, &initial_text);
                 let page = tab_view.append(&editor_widget);
-                page.set_title(Some(tool.display_name()));
+                page.set_title(tool.display_name());
             }
         }
 
