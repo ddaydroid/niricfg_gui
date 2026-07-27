@@ -106,6 +106,9 @@ fn build_diff_editor_side() -> (gtk4::Box, gtk4::TextView, gtk4::Label) {
     let line_label = gtk4::Label::new(None);
     // set_monospace / set_font_desc are unavailable in gtk4 0.9.x, so
     // use CSS to set monospace font for the line-number gutter.
+    // style_context() is deprecated since GTK 4.10 but still works;
+    // the replacement (gtk::StyleManager) requires ≥4.12.
+    #[allow(deprecated)]
     {
         let css_provider = gtk4::CssProvider::new();
         css_provider.load_from_string("* { font-family: monospace; }");
