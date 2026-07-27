@@ -52,9 +52,9 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::sync::AtomicBool;
 use std::time::Duration;
 
 // Re-export libadwaita under the shorter `adw` name used throughout
