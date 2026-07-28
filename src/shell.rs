@@ -67,6 +67,7 @@ use crate::core::diff::line_diff;
 use crate::core::error::Error;
 use crate::core::file_watcher::FileWatcher;
 use crate::core::kdl_highlighter;
+use crate::core::shell_state::ShellState;
 use crate::core::state_persistence::{load_shell_window_state, save_shell_window_state};
 use crate::DynTool;
 
@@ -472,6 +473,7 @@ fn build_editor_page(
     tools: Rc<Vec<DynTool>>,
     tab_diff_state: &mut Vec<TabDiffState>,
     initial_text: &str,
+    shell_state: ShellState,
 ) -> (gtk4::Box, adw::Banner, gtk4::TextView) {
     // --- Banner (validation results) ---
     let banner = adw::Banner::new("");
@@ -630,6 +632,8 @@ fn build_editor_page(
     let banner_clone = banner.clone();
     let debounce_clone = debounce_source.clone();
     let buffer = text_view.buffer();
+    let shell_state_c = shell_state.clone();
+    let original_text_c = original_text.clone();
 
     buffer.connect_changed(move |buf| {
         // Cancel pending debounce timer.
@@ -693,6 +697,14 @@ fn build_editor_page(
         });
 
         *debounce_clone.borrow_mut() = Some(id);
+
+        // --- Dirty flag tracking via ShellState (Wave 0 Step 3) ---
+        let cur_text: String = buf
+            .text(&buf.start_iter(), &buf.end_iter(), false)
+            .to_string();
+        let saved = original_text_c.borrow();
+        shell_state_c.set_dirty(cur_text != *saved);
+        drop(saved);
 
         // --- Parser-Fallback detection (Wave 4 Step 15) ---
         // Whenever the buffer changes, try to parse the text as KDL.
@@ -837,6 +849,7 @@ fn build_editor_page(
 fn handle_external_change(
     tab_states: &Rc<RefCell<Vec<TabDiffState>>>,
     changed_path: &std::path::Path,
+    shell_state: &ShellState,
 ) {
     let states = tab_states.borrow();
     // Find the tab whose config_path matches the changed path.
@@ -888,6 +901,7 @@ fn handle_external_change(
         dialog.set_close_response("ignore");
 
         let st = tab_states.clone();
+        let ss = shell_state.clone();
         dialog.connect_response(None, move |_dlg, response| {
             if response == "reload" {
                 let states = st.borrow_mut();
@@ -895,6 +909,7 @@ fn handle_external_change(
                     let txt = new_text.clone();
                     s.editor_buf.set_text(&txt);
                     *s.original_text.borrow_mut() = txt;
+                    ss.set_dirty(false);
                 }
             }
             // "ignore": do nothing, keep editor state intact
@@ -905,6 +920,7 @@ fn handle_external_change(
         // --- Clean → silent reload ---
         state.editor_buf.set_text(&new_text);
         *state.original_text.borrow_mut() = new_text;
+        shell_state.set_dirty(false);
     }
 }
 
@@ -929,6 +945,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
     let app = adw::Application::new(Some("com.d3t0x.niricfg"), Default::default());
     let tools = Rc::new(plugins);
     let tab_diff_states: Rc<RefCell<Vec<TabDiffState>>> = Rc::new(RefCell::new(Vec::new()));
+    let shell_state = ShellState::default();
 
     app.connect_activate(move |app| {
         // --- Load persisted window state ---
@@ -1039,8 +1056,13 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                     let _ = tool.load(path);
                 }
 
-                let (editor_widget, _banner, _text_view) =
-                    build_editor_page(i, tools.clone(), &mut states, &initial_text);
+                let (editor_widget, _banner, _text_view) = build_editor_page(
+                    i,
+                    tools.clone(),
+                    &mut states,
+                    &initial_text,
+                    shell_state.clone(),
+                );
                 let page = tab_view.append(&editor_widget);
                 page.set_title(tool.display_name());
             }
@@ -1065,6 +1087,11 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         // here before the button handler so it's in scope for the closure.
         let is_saving: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let _is_saving = is_saving;
+
+        // Use Rc<ShellState> for shared ownership across the nested closure
+        // chain. Each `move` closure captures the Rc by value (cheap clone of
+        // the Rc pointer), avoiding move conflicts with other shell_state users.
+        let watcher_shell: Rc<ShellState> = Rc::new(shell_state.clone());
 
         let start_watcher = {
             let tools = tools.clone();
@@ -1109,6 +1136,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 let poll_ds = watcher_debounce_src.clone();
                 let poll_lp = watcher_last_path.clone();
                 let poll_st = tab_diff_states.clone();
+                let poll_shell = watcher_shell.clone();
 
                 glib::timeout_add_local(Duration::from_millis(100), move || {
                     while let Ok(path) = rx.try_recv() {
@@ -1119,10 +1147,11 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
 
                         let lp = poll_lp.clone();
                         let st = poll_st.clone();
+                        let inner_shell = poll_shell.clone();
                         let src = glib::timeout_add_local(Duration::from_millis(500), move || {
                             let path_opt = lp.borrow().clone();
                             if let Some(ref p) = path_opt {
-                                handle_external_change(&st, p);
+                                handle_external_change(&st, p, &inner_shell);
                             }
                             glib::ControlFlow::Break
                         });
@@ -1143,6 +1172,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         let gen_stack = main_stack.clone();
         let gen_win = window.downgrade();
         let gen_start_watcher = start_watcher.clone();
+        let gen_shell = shell_state.clone();
         gen_button.connect_clicked(move |_btn| {
             let Some(tool) = gen_tools.as_slice().first() else {
                 eprintln!("dotcfg-gui: no tools registered for config generation");
@@ -1158,8 +1188,13 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                     let mut states = gen_tab_diff.borrow_mut();
                     states.clear();
 
-                    let (editor_widget, _banner, _text_view) =
-                        build_editor_page(0, gen_tools.clone(), &mut states, &initial_text);
+                    let (editor_widget, _banner, _text_view) = build_editor_page(
+                        0,
+                        gen_tools.clone(),
+                        &mut states,
+                        &initial_text,
+                        gen_shell.clone(),
+                    );
 
                     // Close any existing tab pages before adding the new one.
                     if gen_tab_view.n_pages() > 0 {
@@ -1228,24 +1263,20 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
             }
         }
 
+        // --- ShellState: set initial tool ID ---
+        if let Some(first_tool) = tools.as_slice().first() {
+            shell_state.set_current_tool_id(Some(first_tool.id()));
+        }
+
         // --- Wire dirty shutdown intercept (Wave 5 Step 17) ---
         // Intercept close-request when any tab has unsaved edits.
         // Also persists window state on clean-dismissal.
         {
             let cr_states = tab_diff_states.clone();
             let cr_tools = tools.clone();
+            let cr_shell = shell_state.clone();
             window.connect_close_request(move |win| {
-                let states = cr_states.borrow();
-                let any_dirty = states.iter().any(|s| {
-                    let current = s
-                        .editor_buf
-                        .text(&s.editor_buf.start_iter(), &s.editor_buf.end_iter(), false)
-                        .to_string();
-                    let original = s.original_text.borrow();
-                    current != *original
-                });
-
-                if !any_dirty {
+                if !cr_shell.is_dirty() {
                     // Save window state before proceeding.
                     let (w, h) = win.default_size();
                     let last_tool = cr_tools.as_slice().first().map(|t| t.id());

@@ -17,4 +17,7 @@ pub mod validator;
 pub mod kdl_highlighter;
 
 #[cfg(feature = "gtk")]
+pub mod shell_state;
+
+#[cfg(feature = "gtk")]
 pub mod state_persistence;

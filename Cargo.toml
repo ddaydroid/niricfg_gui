@@ -24,6 +24,7 @@ async-process = "2"
 notify = "7"
 tempfile = "3"
 thiserror = "1"
+once_cell = "1"
 
 # GTK-gated (only built with --features gtk)
 gtk4 = { version = "0.9", optional = true, features = ["v4_14"] }

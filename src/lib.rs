@@ -25,6 +25,8 @@ pub use crate::tools::niri_validator::NiriValidator;
 #[cfg(feature = "gtk")]
 pub use crate::core::kdl_highlighter;
 #[cfg(feature = "gtk")]
+pub use crate::core::shell_state::ShellState;
+#[cfg(feature = "gtk")]
 pub use crate::core::tool_plugin::ToolPluginUi;
 
 #[cfg(feature = "gtk")]
