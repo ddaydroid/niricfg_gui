@@ -20,8 +20,6 @@ sdk-extensions:
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
-  env:
-    RUSTFLAGS: -C link-arg=-fuse-ld=mold
   cflags: -O2 -g
   cxxflags: -O2 -g
 
@@ -29,8 +27,8 @@ modules:
   - name: dotcfg-gui
     buildsystem: simple
     build-commands:
-      # Build the binary with GTK feature.
-      # NOTE: For Flathub submission, replace with vendored sources + --offline.
+      # Build the binary with GTK feature (deps vendored, network not needed).
+      # kdl 6.3.0 is pinned in Cargo.lock (rustc 1.89 compat in GNOME 47 SDK).
       - cargo build --release --features gtk
       # Install binary
       - install -Dm755 target/release/dotcfg-gui /app/bin/dotcfg-gui
@@ -41,6 +39,7 @@ modules:
       - install -Dm644 data/com.github.d3t0x.dotcfg-gui.svg
         /app/share/icons/hicolor/scalable/apps/com.github.d3t0x.dotcfg-gui.svg
     sources:
+      # Project source tree
       - type: dir
         path: .
         skip:
@@ -48,9 +47,13 @@ modules:
           - fuzz/target
           - .git
           - .github
+      # Vendored Cargo dependencies for offline build inside the sandbox.
+      - type: dir
+        path: vendor
+        dest: vendor
     post-install:
-      # Update icon cache
-      - gtk-update-icon-cache --force /app/share/icons/hicolor
+      # Update icon cache (|| true: single-icon installs have no index.theme)
+      - gtk-update-icon-cache --force /app/share/icons/hicolor || true
       # Compile GLib schemas (if any)
       - glib-compile-schemas /app/share/glib-2.0/schemas || true
 
