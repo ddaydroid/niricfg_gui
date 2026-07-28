@@ -222,7 +222,7 @@ pub fn wrap_searchable(content: gtk4::Widget) -> gtk4::Widget {
 
     let toolbar = adw::ToolbarView::new();
     toolbar.set_content(Some(&content));
-    toolbar.add_bottom_bar(&search_bar);
+    toolbar.add_top_bar(&search_bar);
 
     toolbar.upcast()
 }
