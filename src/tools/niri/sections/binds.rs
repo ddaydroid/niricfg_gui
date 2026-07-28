@@ -154,10 +154,10 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
                 let b3 = b.clone();
 
                 controller.connect_key_pressed(move |_ctrl, keyval, _keycode, state| {
-                    let gdk_key = gtk4::gdk::keys::Key(keyval);
+                    let gdk_key = gtk4::gdk::Key(keyval);
 
                     // Escape cancels
-                    if gdk_key == gtk4::gdk::keys::Key::Escape {
+                    if gdk_key == gtk4::gdk::Key::Escape {
                         if let Some(d) = dlg.upgrade() {
                             d.close();
                         }
@@ -212,7 +212,7 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
                         {
                             if let Some(children) = binds_node.children_mut() {
                                 if let Some(target) = children.nodes_mut().get_mut(chord_idx) {
-                                    target.set_name(&chord_str);
+                                    target.set_name(chord_str.as_str());
                                 }
                             }
                         }
@@ -257,7 +257,7 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
                 {
                     if let Some(children) = binds_node.children_mut() {
                         if let Some(target) = children.nodes_mut().get_mut(chord_idx2) {
-                            target.set_name(&row.text());
+                            target.set_name(row.text().as_str());
                         }
                     }
                 }
