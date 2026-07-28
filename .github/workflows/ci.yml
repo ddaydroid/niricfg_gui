@@ -174,3 +174,62 @@ jobs:
         # line" if musl is used; saw on commit 46d876a). cargo-fuzz honors
         # --target <triple> via src/options.rs + src/project.rs:143.
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu kdl_parser -- -max_total_time=30
+
+  flatpak:
+    name: Flatpak Build
+    runs-on: ubuntu-24.04
+    # Flatpak infra changes can break out of our control, but we want
+    # to know about it — informational check, not gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Add flathub remote
+        run: flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      # Cache the Flatpak SDK installation across runs. Cache key includes
+      # the manifest hash so it auto-invalidates when the runtime version
+      # changes (e.g., from 47 to 48 in com.github.d3t0x.dotcfg-gui.yml).
+      - name: Cache Flatpak SDK
+        id: cache-flatpak
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/flatpak
+          key: flatpak-sdk-${{ hashFiles('com.github.d3t0x.dotcfg-gui.yml') }}-${{ runner.os }}
+
+      - name: Install GNOME 47 SDK and rust-stable extension
+        if: steps.cache-flatpak.outputs.cache-hit != 'true'
+        run: |
+          flatpak --user install -y flathub \
+            org.gnome.Sdk/x86_64/47 \
+            org.gnome.Platform/x86_64/47 \
+            org.freedesktop.Sdk.Extension.rust-stable/x86_64/24.08
+
+      - name: Build Flatpak (cached cargo build, vendored deps)
+        run: |
+          flatpak-builder \
+            --force-clean \
+            --user \
+            --install \
+            --ccache \
+            build-dir-ci \
+            com.github.d3t0x.dotcfg-gui.yml
+
+      - name: Verify installed files
+        run: |
+          set -e
+          echo "=== Flatpak build artifacts ==="
+          flatpak run --command=sh com.github.d3t0x.dotcfg-gui -c '
+            echo "Binary:"
+            ls -la /app/bin/dotcfg-gui
+            echo "Desktop entry:"
+            ls -la /app/share/applications/com.github.d3t0x.dotcfg-gui.desktop
+            echo "Icon:"
+            ls -la /app/share/icons/hicolor/scalable/apps/com.github.d3t0x.dotcfg-gui.svg
+          '
+          echo "  OK: All Flatpak artifacts installed"
