@@ -1003,6 +1003,50 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
             .flags(glib::BindingFlags::SYNC_CREATE)
             .build();
 
+        // --- is_saving guard: suppresses file-watcher backfeed during save ---
+        // Must be declared before the Save button and watcher closures.
+        let is_saving: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+
+        // Wire Save button to persist all dirty tabs to disk.
+        // Sets is_saving guard to suppress watcher backfeed for 250ms.
+        let save_btn_states = tab_diff_states.clone();
+        let save_btn_shell = shell_state.clone();
+        let save_btn_saving = is_saving.clone();
+        save_btn.connect_clicked(move |_| {
+            save_btn_saving.store(true, std::sync::atomic::Ordering::Relaxed);
+            let states = save_btn_states.borrow();
+            let mut any_saved = false;
+            for state in states.iter() {
+                let current = state
+                    .editor_buf
+                    .text(
+                        &state.editor_buf.start_iter(),
+                        &state.editor_buf.end_iter(),
+                        false,
+                    )
+                    .to_string();
+                let original = state.original_text.borrow();
+                if current != *original {
+                    if let Some(ref path) = state.config_path {
+                        if std::fs::write(path, &current).is_ok() {
+                            *state.original_text.borrow_mut() = current;
+                            any_saved = true;
+                        }
+                    }
+                }
+            }
+            drop(states);
+            if any_saved {
+                save_btn_shell.set_dirty(false);
+            }
+            // Release the save guard after 250ms so the watcher resumes.
+            let saving = save_btn_saving.clone();
+            glib::timeout_add_local(Duration::from_millis(250), move || {
+                saving.store(false, std::sync::atomic::Ordering::Relaxed);
+                glib::ControlFlow::Break
+            });
+        });
+
         // Global diff toggle.
         let diff_toggle = gtk4::ToggleButton::with_label("Compare");
         diff_toggle.set_tooltip_text(Some(
@@ -1119,8 +1163,9 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         // startup (when configs already exist) AND after the first-run
         // "Generate Default Config" button creates a file. It is defined
         // here before the button handler so it's in scope for the closure.
-        let is_saving: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-        let _is_saving = is_saving;
+        //
+        // `is_saving` is declared earlier (before the Save button) so both
+        // the save handler and the watcher can access it.
 
         // Use Rc<ShellState> for shared ownership across the nested closure
         // chain. Each `move` closure captures the Rc by value (cheap clone of
@@ -1171,8 +1216,14 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 let poll_lp = watcher_last_path.clone();
                 let poll_st = tab_diff_states.clone();
                 let poll_shell = watcher_shell.clone();
+                let poll_saving = is_saving.clone();
 
                 glib::timeout_add_local(Duration::from_millis(100), move || {
+                    // Suppress watcher events while a save is in progress.
+                    if poll_saving.load(std::sync::atomic::Ordering::Relaxed) {
+                        return glib::ControlFlow::Continue;
+                    }
+
                     while let Ok(path) = rx.try_recv() {
                         if let Some(id) = poll_ds.borrow_mut().take() {
                             id.remove();
