@@ -1,0 +1,65 @@
+---
+app-id: com.github.d3t0x.dotcfg-gui
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: dotcfg-gui
+
+# Permissions: Wayland, X11 fallback, GPU acceleration, niri config
+# filesystem access, and host notification access.
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=xdg-config/niri:create
+  - --talk-name=org.freedesktop.Notifications
+
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    RUSTFLAGS: -C link-arg=-fuse-ld=mold
+  cflags: -O2 -g
+  cxxflags: -O2 -g
+
+modules:
+  - name: dotcfg-gui
+    buildsystem: simple
+    build-commands:
+      # Build the binary with GTK feature.
+      # NOTE: For Flathub submission, replace with vendored sources + --offline.
+      - cargo build --release --features gtk
+      # Install binary
+      - install -Dm755 target/release/dotcfg-gui /app/bin/dotcfg-gui
+      # Install desktop entry
+      - install -Dm644 data/com.github.d3t0x.dotcfg-gui.desktop
+        /app/share/applications/com.github.d3t0x.dotcfg-gui.desktop
+      # Install app icon
+      - install -Dm644 data/com.github.d3t0x.dotcfg-gui.svg
+        /app/share/icons/hicolor/scalable/apps/com.github.d3t0x.dotcfg-gui.svg
+    sources:
+      - type: dir
+        path: .
+        skip:
+          - target
+          - fuzz/target
+          - .git
+          - .github
+    post-install:
+      # Update icon cache
+      - gtk-update-icon-cache --force /app/share/icons/hicolor
+      # Compile GLib schemas (if any)
+      - glib-compile-schemas /app/share/glib-2.0/schemas || true
+
+cleanup:
+  - /include
+  - /lib/*.a
+  - /lib/pkgconfig
+  - /share/man
+  - /share/doc
+  - /share/vala
+  - /share/gir-1.0
+  - /share/pkgconfig

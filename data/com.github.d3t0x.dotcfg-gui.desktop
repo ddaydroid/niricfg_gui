@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=dotcfg-gui
+Comment=Extensible GTK4/libadwaita dotfile config editor
+Comment[de]=Erweiterbarer GTK4/libadwaita-Konfigurationseditor
+Comment[fr]=Éditeur de configuration extensible GTK4/libadwaita
+Categories=GTK;GNOME;Utility;TextEditor;
+Keywords=niri;config;kdl;wayland;
+Exec=dotcfg-gui
+Icon=com.github.d3t0x.dotcfg-gui
+Terminal=false
+StartupNotify=true
+X-GNOME-UsesNotifications=true

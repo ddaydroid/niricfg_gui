@@ -39,6 +39,7 @@
 //! This heuristic is intentionally coarse — a later wave can switch to
 //! a machine-parseable format once niri exposes one.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::core::error::{Error, Severity, ValidationIssue};
@@ -52,6 +53,17 @@ const NIRI_VALIDATE_DEBOUNCE: Duration = Duration::from_millis(500);
 /// Niri compositor validator. Stateless — the struct holds no data;
 /// all relevant context is passed through `validate_kdl`.
 pub struct NiriValidator;
+
+/// Detect whether we are running inside a Flatpak sandbox.
+///
+/// Checks for the existence of `/.flatpak-info`, which is the canonical
+/// indicator. Falls back to checking the `FLATPAK_ID` env var.
+fn is_flatpak() -> bool {
+    static FLATPAK: OnceLock<bool> = OnceLock::new();
+    *FLATPAK.get_or_init(|| {
+        std::path::Path::new("/.flatpak-info").exists() || std::env::var("FLATPAK_ID").is_ok()
+    })
+}
 
 /// Parse `niri msg validate` output into a list of validation issues.
 ///
@@ -136,8 +148,19 @@ impl Validator for NiriValidator {
                 .ok_or_else(|| Error::Plugin("non-UTF-8 tempfile path".to_string()))?
                 .to_string();
 
-            let output = async_process::Command::new("niri")
-                .args(["validate", "--config", &config_path])
+            // When running inside Flatpak, escape the sandbox via
+            // `flatpak-spawn --host` so the niri binary (on the host
+            // system) can be reached. Outside Flatpak, call niri
+            // directly.
+            let (prog, args_prefix): (&str, &[&str]) = if is_flatpak() {
+                ("flatpak-spawn", &["--host", "niri", "validate", "--config"])
+            } else {
+                ("niri", &["validate", "--config"])
+            };
+
+            let output = async_process::Command::new(prog)
+                .args(args_prefix)
+                .arg(&config_path)
                 .output()
                 .await;
 

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3584e4"/>
+      <stop offset="100%" stop-color="#1a5fb4"/>
+    </linearGradient>
+    <linearGradient id="doc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ebebeb"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="64" fill="url(#bg)"/>
+  <!-- Document body -->
+  <rect x="36" y="28" width="56" height="72" rx="6" ry="6" fill="url(#doc)" stroke="#c0c0c0" stroke-width="1"/>
+  <!-- Document lines (representing text/config content) -->
+  <rect x="44" y="42" width="40" height="3" rx="1.5" fill="#b0b0b0"/>
+  <rect x="44" y="50" width="32" height="3" rx="1.5" fill="#b0b0b0"/>
+  <rect x="44" y="58" width="36" height="3" rx="1.5" fill="#b0b0b0"/>
+  <rect x="44" y="66" width="28" height="3" rx="1.5" fill="#b0b0b0"/>
+  <!-- Gear icon representing configuration -->
+  <g transform="translate(78, 72)">
+    <path d="M 0,-16 C -1.5,-16 -3,-15.5 -4.5,-14.5 L -6,-16 C -7,-15 -8,-13.5 -7.5,-12 L -6,-11 C -6.5,-10 -6.5,-9 -6,-8 L -7.5,-7 C -7.5,-5.5 -7,-4 -6,-3 L -4.5,-4.5 C -3,-3.5 -1.5,-3 0,-3 C 1.5,-3 3,-3.5 4.5,-4.5 L 6,-3 C 7,-4 7.5,-5.5 7.5,-7 L 6,-8 C 6.5,-9 6.5,-10 6,-11 L 7.5,-12 C 8,-13.5 7,-15 6,-16 L 4.5,-14.5 C 3,-15.5 1.5,-16 0,-16 Z"
+          fill="#f5c211" stroke="#e6a800" stroke-width="0.8"/>
+    <circle cx="0" cy="-9.5" r="4" fill="#fff" stroke="#e6a800" stroke-width="0.5"/>
+  </g>
+  <!-- Checkmark overlay -->
+  <g transform="translate(52, 74)">
+    <path d="M 0,10 L 5,15 L 12,5"
+          fill="none" stroke="#33d17a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
