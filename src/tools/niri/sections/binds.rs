@@ -126,7 +126,7 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
             let b = buf.clone();
             move |_| {
                 let dialog = adw::Dialog::new();
-                dialog.set_title(Some("Record Key Binding"));
+                dialog.set_title("Record Key Binding");
                 dialog.set_content_width(360);
                 dialog.set_content_height(200);
 
@@ -153,11 +153,9 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
                 let display_clone = display.clone();
                 let b3 = b.clone();
 
-                controller.connect_key_pressed(move |_ctrl, keyval, _keycode, state| {
-                    let gdk_key = gtk4::gdk::Key(keyval);
-
+                controller.connect_key_pressed(move |_ctrl, key, _keycode, state| {
                     // Escape cancels
-                    if gdk_key == gtk4::gdk::Key::Escape {
+                    if key == gtk4::gdk::Key::Escape {
                         if let Some(d) = dlg.upgrade() {
                             d.close();
                         }
@@ -179,8 +177,8 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
                         mods.push("Alt");
                     }
 
-                    // Get key name via the Key type
-                    let key_name = gdk_key.name().unwrap_or_else(|| glib::GString::from("?"));
+                    // Get key name via the Key type's name() method
+                    let key_name = key.name().unwrap_or_else(|| glib::GString::from("?"));
 
                     // For letter keys, use uppercase for Niri convention
                     let key_str = if key_name.len() == 1 {
@@ -231,7 +229,7 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
                 content.add_controller(controller);
                 dialog.set_child(Some(&content));
 
-                // Present dialog as a transient window
+                // Present dialog
                 dialog.present(None::<&gtk4::Window>);
             }
         });
@@ -279,7 +277,6 @@ pub fn build_binds_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
                     if let Some(children) = binds_node.children_mut() {
                         if let Some(target) = children.nodes_mut().get_mut(chord_idx3) {
                             // Parse the action text back into entries.
-                            // Simple heuristic: split by whitespace.
                             let action_text = row.text();
                             let parts: Vec<&str> = action_text.split_whitespace().collect();
                             let mut new_entries: Vec<KdlEntry> = Vec::new();
