@@ -29,7 +29,7 @@ use super::get_buffer_text;
 pub fn build_output_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Widget {
     let group = adw::PreferencesGroup::new();
     group.set_title("Output");
-    group.set_description("Per-monitor display settings");
+    group.set_description(Some("Per-monitor display settings"));
 
     let init_doc = tool.doc().unwrap_or_default();
 
@@ -74,8 +74,8 @@ pub fn build_output_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
             .find(|n| n.name().value() == "scale")
             .and_then(|n| n.entries().first())
             .and_then(|e| match e.value() {
-                KdlValue::Decimal(f) => Some(*f),
-                KdlValue::Base10(i) => Some(*i as f64),
+                KdlValue::Float(f) => Some(*f),
+                KdlValue::Integer(i) => Some(*i as f64),
                 _ => None,
             })
             .unwrap_or(1.0);
@@ -149,7 +149,7 @@ fn modify_output_scale(doc: &mut KdlDocument, monitor: &str, scale: f64) {
                 if let Some(children) = node.children_mut() {
                     for child in children.nodes_mut().iter_mut() {
                         if child.name().value() == "scale" {
-                            let entry = KdlEntry::new(KdlValue::Decimal(scale));
+                            let entry = KdlEntry::new(KdlValue::Float(scale));
                             if child.entries().is_empty() {
                                 child.entries_mut().push(entry);
                             } else {
@@ -162,7 +162,7 @@ fn modify_output_scale(doc: &mut KdlDocument, monitor: &str, scale: f64) {
                     let mut new_node = KdlNode::new("scale");
                     new_node
                         .entries_mut()
-                        .push(KdlEntry::new(KdlValue::Decimal(scale)));
+                        .push(KdlEntry::new(KdlValue::Float(scale)));
                     children.nodes_mut().push(new_node);
                 }
                 return;

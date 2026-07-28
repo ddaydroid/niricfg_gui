@@ -34,8 +34,8 @@ pub fn get_kdl_str(doc: &KdlDocument, path: &[&str]) -> Option<String> {
             return node.entries().first().and_then(|e| match e.value() {
                 KdlValue::String(s) => Some(s.clone()),
                 KdlValue::Identifier(s) => Some(s.clone()),
-                KdlValue::Decimal(n) => Some(n.to_string()),
-                KdlValue::Base10(n) => Some(n.to_string()),
+                KdlValue::Float(n) => Some(n.to_string()),
+                KdlValue::Integer(n) => Some(n.to_string()),
                 _ => None,
             });
         }
@@ -59,8 +59,8 @@ pub fn get_kdl_f64(doc: &KdlDocument, path: &[&str]) -> Option<f64> {
             .find(|n| n.name().value() == segment)?;
         if i == path.len() - 1 {
             return node.entries().first().and_then(|e| match e.value() {
-                KdlValue::Decimal(n) => Some(*n),
-                KdlValue::Base10(n) => Some(*n as f64),
+                KdlValue::Float(n) => Some(*n),
+                KdlValue::Integer(n) => Some(*n as f64),
                 KdlValue::String(s) => s.parse::<f64>().ok(),
                 _ => None,
             });
@@ -101,7 +101,7 @@ pub fn set_kdl_value(doc: &mut KdlDocument, path: &[&str], value: &KdlValue) {
         if depth == last {
             let node = &mut cur.nodes_mut()[idx];
             let entry = match value {
-                KdlValue::Decimal(f) => KdlEntry::new(KdlValue::Decimal(*f)),
+                KdlValue::Float(f) => KdlEntry::new(KdlValue::Float(*f)),
                 KdlValue::String(s) => KdlEntry::new(KdlValue::String(s.clone())),
                 _ => KdlEntry::new(value.clone()),
             };
@@ -118,7 +118,7 @@ pub fn set_kdl_value(doc: &mut KdlDocument, path: &[&str], value: &KdlValue) {
 
 /// Convenience: set an f64 value.
 pub fn set_kdl_f64(doc: &mut KdlDocument, path: &[&str], value: f64) {
-    set_kdl_value(doc, path, &KdlValue::Decimal(value));
+    set_kdl_value(doc, path, &KdlValue::Float(value));
 }
 
 /// Read all text from a buffer as a String.

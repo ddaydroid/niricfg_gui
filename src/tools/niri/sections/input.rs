@@ -33,7 +33,7 @@ use super::{get_buffer_text, get_kdl_bool, get_kdl_f64, get_kdl_str, set_kdl_f64
 pub fn build_input_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Widget {
     let group = adw::PreferencesGroup::new();
     group.set_title("Input");
-    group.set_description("Keyboard and touchpad settings");
+    group.set_description(Some("Keyboard and touchpad settings"));
 
     // Snapshot initial values from the tool's current ConfigDoc.
     let init_doc = tool.doc().unwrap_or_default();
@@ -140,14 +140,14 @@ pub fn build_input_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
             set_kdl_value(
                 &mut doc,
                 &["input", "keyboard", "xkb-layout"],
-                &KdlValue::String(val),
+                &KdlValue::String(val.to_string()),
             );
             b.set_text(&doc.to_string());
         }
     });
 
     let b = buf.clone();
-    tap_to_click_row.connect_active_notified(move |row| {
+    tap_to_click_row.connect_active_notify(move |row| {
         let text = get_buffer_text(&b);
         if let Ok(mut doc) = KdlDocument::from_str(&text) {
             let val = if row.is_active() { "true" } else { "false" };
@@ -161,7 +161,7 @@ pub fn build_input_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
     });
 
     let b = buf.clone();
-    natural_scroll_row.connect_active_notified(move |row| {
+    natural_scroll_row.connect_active_notify(move |row| {
         let text = get_buffer_text(&b);
         if let Ok(mut doc) = KdlDocument::from_str(&text) {
             let val = if row.is_active() { "true" } else { "false" };
@@ -175,7 +175,7 @@ pub fn build_input_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> g
     });
 
     let b = buf;
-    tap_and_drag_row.connect_active_notified(move |row| {
+    tap_and_drag_row.connect_active_notify(move |row| {
         let text = get_buffer_text(&b);
         if let Ok(mut doc) = KdlDocument::from_str(&text) {
             let val = if row.is_active() { "true" } else { "false" };

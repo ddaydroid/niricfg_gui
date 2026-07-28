@@ -24,7 +24,7 @@ use super::get_buffer_text;
 pub fn build_layer_rules_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Widget {
     let group = adw::PreferencesGroup::new();
     group.set_title("Layer Rules");
-    group.set_description("Layer-shell window placement rules");
+    group.set_description(Some("Layer-shell window placement rules"));
 
     let init_doc = tool.doc().unwrap_or_default();
 
@@ -84,7 +84,7 @@ pub fn build_layer_rules_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer
             .find(|e| e.name().is_some_and(|n| n.value() == "workspace"))
             .and_then(|e| match e.value() {
                 KdlValue::String(s) => Some(s.clone()),
-                KdlValue::Decimal(n) => Some(n.to_string()),
+                KdlValue::Integer(n) => Some(n.to_string()),
                 _ => None,
             })
             .unwrap_or_default();
@@ -176,6 +176,8 @@ fn modify_match_prop(
 
     // No existing entry — add one.
     let mut new_entry = KdlEntry::new(KdlValue::String(prop_value.to_string()));
-    new_entry.set_name(Some(kdl::KdlIdentifier::new(prop_name)));
+    new_entry.set_name(Some(
+        kdl::KdlIdentifier::parse(prop_name).expect("valid KDL identifier"),
+    ));
     match_node.entries_mut().push(new_entry);
 }

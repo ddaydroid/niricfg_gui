@@ -31,7 +31,7 @@ use super::{get_buffer_text, get_kdl_f64, get_kdl_str, set_kdl_f64, set_kdl_valu
 pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Widget {
     let group = adw::PreferencesGroup::new();
     group.set_title("Layout");
-    group.set_description("Window gaps, focus ring, and border appearance");
+    group.set_description(Some("Window gaps, focus ring, and border appearance"));
 
     let init_doc = tool.doc().unwrap_or_default();
 
@@ -137,7 +137,7 @@ pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
             set_kdl_value(
                 &mut doc,
                 &["layout", "focus-ring", "active-color"],
-                &KdlValue::String(row.text()),
+                &KdlValue::String(row.text().to_string()),
             );
             b.set_text(&doc.to_string());
         }
@@ -150,7 +150,7 @@ pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
             set_kdl_value(
                 &mut doc,
                 &["layout", "focus-ring", "off-color"],
-                &KdlValue::String(row.text()),
+                &KdlValue::String(row.text().to_string()),
             );
             b.set_text(&doc.to_string());
         }
@@ -172,7 +172,7 @@ pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
             set_kdl_value(
                 &mut doc,
                 &["layout", "border", "active-color"],
-                &KdlValue::String(row.text()),
+                &KdlValue::String(row.text().to_string()),
             );
             b.set_text(&doc.to_string());
         }
@@ -185,7 +185,7 @@ pub fn build_layout_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
             set_kdl_value(
                 &mut doc,
                 &["layout", "border", "inactive-color"],
-                &KdlValue::String(row.text()),
+                &KdlValue::String(row.text().to_string()),
             );
             b.set_text(&doc.to_string());
         }

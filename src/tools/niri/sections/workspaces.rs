@@ -23,7 +23,7 @@ use super::{get_buffer_text, set_kdl_value};
 pub fn build_workspaces_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Widget {
     let group = adw::PreferencesGroup::new();
     group.set_title("Workspaces");
-    group.set_description("Preferred workspace per output");
+    group.set_description(Some("Preferred workspace per output"));
 
     let init_doc = tool.doc().unwrap_or_default();
 
@@ -52,8 +52,8 @@ pub fn build_workspaces_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer)
                 .entries()
                 .get(1)
                 .and_then(|e| match e.value() {
-                    KdlValue::Decimal(f) => Some(*f),
-                    KdlValue::Base10(i) => Some(*i as f64),
+                    KdlValue::Float(f) => Some(*f),
+                    KdlValue::Integer(i) => Some(*i as f64),
                     KdlValue::String(s) => s.parse::<f64>().ok(),
                     _ => None,
                 })
@@ -114,7 +114,7 @@ pub fn build_workspaces_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer)
                             .unwrap_or(false);
 
                         if is_match {
-                            let entry = KdlEntry::new(KdlValue::Decimal(row.value()));
+                            let entry = KdlEntry::new(KdlValue::Float(row.value()));
                             if node.entries().len() < 2 {
                                 node.entries_mut().push(entry);
                             } else {
