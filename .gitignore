@@ -6,6 +6,8 @@ target/
 # Editor / IDE
 .idea/
 .vscode/
+# But vendored crates' .vscode/ directories must be committed for offline Flatpak builds
+!/vendor/**/.vscode/
 *.swp
 *.swo
 *~
