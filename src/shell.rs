@@ -50,6 +50,7 @@
 #![cfg(feature = "gtk")]
 
 use std::cell::RefCell;
+use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
@@ -63,12 +64,15 @@ use std::time::Duration;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
+use crate::core::config_loader::load_config;
+use crate::core::config_writer::save_config;
 use crate::core::diff::line_diff;
 use crate::core::error::Error;
 use crate::core::file_watcher::FileWatcher;
 use crate::core::kdl_highlighter;
 use crate::core::shell_state::ShellState;
 use crate::core::state_persistence::{load_shell_window_state, save_shell_window_state};
+use crate::core::undo_stack::{UndoCommand, UndoStack};
 use crate::DynTool;
 
 #[cfg(feature = "gtk")]
@@ -94,6 +98,30 @@ struct TabDiffState {
     window: glib::WeakRef<adw::ApplicationWindow>,
     /// The tool's config path on disk (for reloading content).
     config_path: Option<PathBuf>,
+    /// Undo history for this tab (stores text snapshots).
+    undo_stack: Rc<RefCell<UndoStack<TextUndoCommand>>>,
+    /// Guard to prevent re-entrant undo pushes when undo/redo sets buffer text.
+    suppressing_undo: Rc<std::cell::Cell<bool>>,
+}
+
+/// Undo command that stores a text snapshot for the editor buffer.
+///
+/// Stores both the OLD text (state before edit) and NEW text (state after
+/// edit). The shell's undo handler reads `old_text` to restore the pre-edit
+/// state; the redo handler reads `new_text` to restore the post-undo state.
+/// The `undo()` / `apply()` methods themselves are no-ops because the
+/// actual buffer manipulation happens in the shell's GTK event handlers.
+struct TextUndoCommand {
+    old_text: String,
+    new_text: String,
+}
+
+impl UndoCommand for TextUndoCommand {
+    fn apply(&mut self) {}
+    fn undo(&mut self) {}
+    fn label(&self) -> &str {
+        "edit"
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +616,11 @@ fn build_editor_page(
 
     stack.add_titled(&fallback_box, Some("fallback"), "Fallback");
 
+    // --- Undo stack for this tab ---
+    let undo_stack: Rc<RefCell<UndoStack<TextUndoCommand>>> =
+        Rc::new(RefCell::new(UndoStack::new()));
+    let suppressing_undo: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(false));
+
     // Push TabDiffState so the global toggle & external-change handler
     // can manage this tab. The window reference is set later by run_shell
     // (the window is not yet created at build_editor_page time).
@@ -601,6 +634,8 @@ fn build_editor_page(
         right_line_label: diff_widget.right_line_label,
         window: glib::WeakRef::new(),
         config_path: None,
+        undo_stack: undo_stack.clone(),
+        suppressing_undo: suppressing_undo.clone(),
     });
 
     // --- Layout: banner + stack ---
@@ -627,6 +662,12 @@ fn build_editor_page(
     let restore_error_desc = parse_error_desc.clone();
     let restore_error_tag = parse_error_tag.clone();
 
+    // --- Undo tracking for this tab ---
+    // previous_text tracks the state BEFORE the current edit. Each
+    // connect_changed push records the pre-edit snapshot onto the
+    // undo stack, then updates previous_text to the current text.
+    let previous_text: Rc<RefCell<String>> = Rc::new(RefCell::new(initial_text.to_string()));
+
     // Core captures for connect_changed (consumes originals via move).
     let tools_clone = tools;
     let banner_clone = banner.clone();
@@ -634,6 +675,9 @@ fn build_editor_page(
     let buffer = text_view.buffer();
     let shell_state_c = shell_state.clone();
     let original_text_c = original_text.clone();
+    let undo_stack_c = undo_stack.clone();
+    let previous_text_c = previous_text.clone();
+    let suppressing_undo_c = suppressing_undo.clone();
 
     buffer.connect_changed(move |buf| {
         // Cancel pending debounce timer.
@@ -705,10 +749,23 @@ fn build_editor_page(
 
         *debounce_clone.borrow_mut() = Some(id);
 
-        // --- Dirty flag tracking via ShellState (Wave 0 Step 3) ---
+        // --- Undo command: push pre-edit text snapshot ---
+        // Skip push when text is being restored by undo/redo (suppressed).
         let cur_text: String = buf
             .text(&buf.start_iter(), &buf.end_iter(), false)
             .to_string();
+        if !suppressing_undo_c.get() {
+            let prev = previous_text_c.borrow().clone();
+            if prev != cur_text {
+                undo_stack_c.borrow_mut().push(TextUndoCommand {
+                    old_text: prev,
+                    new_text: cur_text.clone(),
+                });
+            }
+        }
+        *previous_text_c.borrow_mut() = cur_text.clone();
+
+        // --- Dirty flag tracking via ShellState (Wave 0 Step 3) ---
         let saved = original_text_c.borrow();
         shell_state_c.set_dirty(cur_text != *saved);
         drop(saved);
@@ -840,6 +897,30 @@ fn build_editor_page(
     });
 
     (vbox, banner, text_view)
+}
+
+// ---------------------------------------------------------------------------
+// Atomic save helper
+// ---------------------------------------------------------------------------
+
+/// Write `text` to `path` using the atomic tempfile+rename strategy.
+///
+/// If `text` is valid KDL, re-parses it and delegates to `save_config` for
+/// full comment-preserving round-trip. If parsing fails, falls back to a
+/// direct atomic write (tempfile + write + flush + rename) so that broken
+/// KDL can still be saved and fixed.
+fn atomic_save_text(text: &str, path: &std::path::Path) -> Result<(), Error> {
+    // Attempt KDL re-parse for full comment-preserving save.
+    if let Ok(doc) = load_config(text) {
+        return save_config(&doc, path);
+    }
+    // Fallback: direct atomic write for non-KDL or broken KDL.
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(text.as_bytes())?;
+    tmp.flush()?;
+    std::fs::rename(tmp.path(), path)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,7 +1109,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                 let original = state.original_text.borrow();
                 if current != *original {
                     if let Some(ref path) = state.config_path {
-                        if std::fs::write(path, &current).is_ok() {
+                        if atomic_save_text(&current, path).is_ok() {
                             *state.original_text.borrow_mut() = current;
                             any_saved = true;
                         }
@@ -1353,6 +1434,67 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
             shell_state.set_current_tool_id(Some(first_tool.id()));
         }
 
+        // --- Wire Undo/Redo buttons to active tab's undo stack ---
+        {
+            let undo_states = tab_diff_states.clone();
+            let undo_tv = tab_view.clone();
+            undo_btn.connect_clicked(move |_| {
+                let page = match undo_tv.selected_page() {
+                    Some(p) => p,
+                    None => return,
+                };
+                let idx = undo_tv.page_position(&page);
+                if idx < 0 {
+                    return;
+                }
+                let states = undo_states.borrow();
+                if let Some(state) = states.get(idx as usize) {
+                    let mut stack = state.undo_stack.borrow_mut();
+                    if !stack.can_undo() {
+                        return;
+                    }
+                    // Pop and read OLD text (pre-edit state).
+                    let old_text = stack.undo().map(|cmd| cmd.old_text.clone());
+                    drop(stack);
+                    if let Some(text) = old_text {
+                        state.suppressing_undo.set(true);
+                        state.editor_buf.set_text(&text);
+                        // original_text is NOT updated here — let connect_changed
+                        // handle dirty-flag comparison against the saved-on-disk
+                        // baseline. previous_text IS updated (connect_changed runs
+                        // it outside the suppressing_undo gate).
+                        state.suppressing_undo.set(false);
+                    }
+                }
+            });
+
+            let redo_states = tab_diff_states.clone();
+            let redo_tv = tab_view.clone();
+            redo_btn.connect_clicked(move |_| {
+                let page = match redo_tv.selected_page() {
+                    Some(p) => p,
+                    None => return,
+                };
+                let idx = redo_tv.page_position(&page);
+                if idx < 0 {
+                    return;
+                }
+                let states = redo_states.borrow();
+                if let Some(state) = states.get(idx as usize) {
+                    let mut stack = state.undo_stack.borrow_mut();
+                    // Pop and read NEW text (post-undo state).
+                    let new_text = stack.redo().map(|cmd| cmd.new_text.clone());
+                    drop(stack);
+                    if let Some(text) = new_text {
+                        state.suppressing_undo.set(true);
+                        state.editor_buf.set_text(&text);
+                        // original_text NOT updated — same as undo handler.
+                        state.suppressing_undo.set(false);
+                    }
+                }
+            });
+        }
+
         // --- Wire dirty shutdown intercept (Wave 5 Step 17) ---
         // Intercept close-request when any tab has unsaved edits.
         // Also persists window state on clean-dismissal.
@@ -1398,7 +1540,7 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
                             let original = state.original_text.borrow();
                             if current != *original {
                                 if let Some(ref path) = state.config_path {
-                                    let _ = std::fs::write(path, &current);
+                                    let _ = atomic_save_text(&current, path);
                                     *state.original_text.borrow_mut() = current;
                                 }
                             }
