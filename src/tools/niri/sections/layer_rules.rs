@@ -32,7 +32,8 @@ pub fn build_layer_rules_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer
     let layer_rules_node = init_doc
         .nodes()
         .iter()
-        .find(|n| n.name().value() == "layer-rules");
+        .find(|n| n.name().value() == "layer-rules")
+        .cloned();
     let match_nodes: Vec<(usize, kdl::KdlNode)> = layer_rules_node
         .iter()
         .flat_map(|n| n.children().iter().flat_map(|c| c.nodes().iter().cloned()))

@@ -24,8 +24,8 @@ use crate::tools::niri::NiriTool;
 /// wrapped in `Adw.Clamp` for a comfortable max-width reading experience.
 fn build_shell_page(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Widget {
     let clamp = adw::Clamp::new();
-    clamp.set_maximum_size(800.0);
-    clamp.set_tightening_threshold(400.0);
+    clamp.set_maximum_size(800);
+    clamp.set_tightening_threshold(400);
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
     vbox.set_margin_start(12);

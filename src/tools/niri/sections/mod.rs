@@ -10,6 +10,7 @@
 //! KDL node, re-serialises, and writes back to the buffer. This triggers the
 //! shell's existing debounced validation loop.
 
+use gtk4::prelude::*;
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 
 pub mod input;
@@ -33,7 +34,7 @@ pub fn get_kdl_str(doc: &KdlDocument, path: &[&str]) -> Option<String> {
         if i == path.len() - 1 {
             return node.entries().first().and_then(|e| match e.value() {
                 KdlValue::String(s) => Some(s.clone()),
-                KdlValue::Identifier(s) => Some(s.clone()),
+
                 KdlValue::Float(n) => Some(n.to_string()),
                 KdlValue::Integer(n) => Some(n.to_string()),
                 _ => None,
@@ -84,7 +85,7 @@ pub fn set_kdl_value(doc: &mut KdlDocument, path: &[&str], value: &KdlValue) {
             Some(idx) => {
                 node_indices.push(idx);
                 if node_indices.len() < path.len() {
-                    if let Some(children) = current.nodes()[idx].children() {
+                    if let Some(children) = current.nodes_mut()[idx].children_mut() {
                         current = children;
                     } else {
                         return;
