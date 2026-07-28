@@ -1,5 +1,8 @@
 # Rust / Cargo build artifacts
 target/
+# But vendored crates' target/ directories are source code (e.g., cc crate's
+# src/target/ has platform-specific sources). Keep them for offline builds.
+!/vendor/**/target/
 **/*.rs.bk
 *.pdb
 
