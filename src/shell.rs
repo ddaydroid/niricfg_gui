@@ -52,6 +52,7 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -518,7 +519,70 @@ fn build_editor_page(
     }
 
     stack.add_titled(&scrolled, Some("raw"), "Raw");
-    stack.add_titled(&diff_widget.paned, Some("diff"), "Diff");
+    // --- Parser-fallback view (Wave 4 Step 15) ---
+    // When the buffer text fails to parse as KDL, the stack switches to this
+    // view instead of the sections/raw editor. The user sees the raw text
+    // with the error span highlighted in red, and a "Restore GUI" button
+    // that re-parses and restores the structured section view on success.
+    let fallback_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    fallback_box.set_vexpand(true);
+
+    let parse_error_label = gtk4::Label::new(None::<&str>);
+    parse_error_label.set_xalign(0.0);
+    parse_error_label.set_margin_start(8);
+    parse_error_label.set_margin_end(8);
+    parse_error_label.set_margin_top(12);
+    parse_error_label.add_css_class("error");
+    parse_error_label.add_css_class("heading");
+    parse_error_label.set_text("KDL Parse Error");
+    fallback_box.append(&parse_error_label);
+
+    let parse_error_desc = gtk4::Label::new(None::<&str>);
+    parse_error_desc.set_xalign(0.0);
+    parse_error_desc.set_wrap(true);
+    parse_error_desc.set_margin_start(8);
+    parse_error_desc.set_margin_end(8);
+    parse_error_desc.set_margin_bottom(4);
+    parse_error_desc.set_sensitive(false);
+    fallback_box.append(&parse_error_desc);
+
+    let fallback_scrolled = gtk4::ScrolledWindow::new();
+    fallback_scrolled.set_vexpand(true);
+    fallback_scrolled.set_hexpand(true);
+
+    let fallback_view = gtk4::TextView::new();
+    fallback_view.set_buffer(Some(&text_view.buffer())); // shared buffer
+    fallback_view.set_monospace(true);
+    fallback_view.set_vexpand(true);
+    fallback_view.set_hexpand(true);
+    fallback_view.set_wrap_mode(gtk4::WrapMode::Word);
+    fallback_view.set_margin_start(8);
+    fallback_view.set_margin_end(8);
+    fallback_view.set_margin_top(4);
+    fallback_view.set_margin_bottom(4);
+    // KDL highlighting is already applied to the shared buffer, so the
+    // fallback view inherits it automatically.
+    fallback_scrolled.set_child(Some(&fallback_view));
+    fallback_box.append(&fallback_scrolled);
+
+    // Error span tag — red background to highlight the parse error location
+    // in the fallback text view (offset from kdl::KdlDiagnostic::span).
+    let parse_error_tag = text_view
+        .buffer()
+        .create_tag(Some("parse_error"), &[])
+        .expect("create_tag failed");
+    parse_error_tag.set_background(Some("#5a1b1b"));
+
+    // Restore GUI button: re-parses the buffer and rebuilds sections on success.
+    let restore_btn = gtk4::Button::with_label("Restore GUI");
+    restore_btn.add_css_class("suggested-action");
+    restore_btn.add_css_class("pill");
+    restore_btn.set_halign(gtk4::Align::Center);
+    restore_btn.set_margin_top(8);
+    restore_btn.set_margin_bottom(8);
+    fallback_box.append(&restore_btn);
+
+    stack.add_titled(&fallback_box, Some("fallback"), "Fallback");
 
     // Push TabDiffState so the global toggle & external-change handler
     // can manage this tab. The window reference is set later by run_shell
@@ -544,6 +608,22 @@ fn build_editor_page(
     // --- Debounce state (validation loop) ---
     let debounce_source: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
+    // --- Parser-fallback closures (Wave 4 Step 15) ---
+    // Pre-clone widgets for connect_changed and restore button before
+    // moving originals into the connect_changed closure.
+    let parse_stack = stack.clone();
+    let parse_error_label_c = parse_error_label.clone();
+    let parse_error_desc_c = parse_error_desc.clone();
+    let parse_error_tag_c = parse_error_tag.clone();
+
+    let restore_tools = tools.clone();
+    let restore_stack = stack.clone();
+    let restore_buf = text_view.buffer();
+    let restore_tool_index = tool_index;
+    let restore_error_desc = parse_error_desc.clone();
+    let restore_error_tag = parse_error_tag.clone();
+
+    // Core captures for connect_changed (consumes originals via move).
     let tools_clone = tools;
     let banner_clone = banner.clone();
     let debounce_clone = debounce_source.clone();
@@ -611,6 +691,131 @@ fn build_editor_page(
         });
 
         *debounce_clone.borrow_mut() = Some(id);
+
+        // --- Parser-Fallback detection (Wave 4 Step 15) ---
+        // Whenever the buffer changes, try to parse the text as KDL.
+        // If parsing fails and the stack is in sections/raw mode, switch
+        // to the fallback view with the error span highlighted.
+        // If parsing succeeds and the stack is in fallback mode, restore
+        // the sections view.
+        let parse_text: String = buf
+            .text(&buf.start_iter(), &buf.end_iter(), false)
+            .to_string();
+
+        match kdl::KdlDocument::from_str(&parse_text) {
+            Ok(_) => {
+                // Parse succeeded. If currently in fallback mode, restore sections.
+                if parse_stack.visible_child_name().as_deref() == Some("fallback") {
+                    // Clear the error highlighting from the buffer.
+                    let clear_start = buf.start_iter();
+                    let clear_end = buf.end_iter();
+                    buf.remove_tag(&parse_error_tag_c, &clear_start, &clear_end);
+                    // Switch back to sections (structured view) or raw as fallback.
+                    if parse_stack.child_by_name("sections").is_some() {
+                        parse_stack.set_visible_child_name("sections");
+                    } else {
+                        parse_stack.set_visible_child_name("raw");
+                    }
+                }
+            }
+            Err(err) => {
+                // Parse failed. Switch to fallback if not already there
+                // (and not in diff mode, which the user explicitly selected).
+                let current = parse_stack.visible_child_name();
+                if current.as_deref() != Some("fallback") && current.as_deref() != Some("diff") {
+                    // Update the error banner with details from the first diagnostic.
+                    if let Some(diag) = err.diagnostics.first() {
+                        let msg = diag.message.clone().unwrap_or_default();
+                        let help = diag.help.clone().unwrap_or_default();
+                        let detail = if help.is_empty() {
+                            msg
+                        } else {
+                            format!("{msg}\n\nSuggestion: {help}")
+                        };
+                        parse_error_desc_c.set_text(&detail);
+
+                        // Highlight the offending span in red.
+                        let offset = diag.span.offset();
+                        let len = diag.span.len().max(1);
+                        let hi_start = buf.iter_at_offset(offset as i32);
+                        let hi_end = buf.iter_at_offset((offset + len) as i32);
+                        buf.apply_tag(&parse_error_tag_c, &hi_start, &hi_end);
+                    } else {
+                        parse_error_desc_c.set_text("Unknown parsing error");
+                    }
+
+                    // Hide the validation banner when entering fallback — the
+                    // KDL parse failure is the more actionable issue.
+                    parse_error_label_c.set_text("KDL Parse Error");
+                    banner_clone.set_revealed(false);
+                    parse_stack.set_visible_child_name("fallback");
+                }
+            }
+        }
+    });
+
+    // --- Wire the Restore GUI button ---
+    // Re-parses the current buffer text. On success, rebuilds the sections
+    // widget tree (because the old sections were built from stale state)
+    // and switches the stack back to sections view. On failure, updates
+    // the error display with the new diagnostic.
+    restore_btn.connect_clicked(move |_| {
+        let text: String = restore_buf
+            .text(&restore_buf.start_iter(), &restore_buf.end_iter(), false)
+            .to_string();
+
+        match kdl::KdlDocument::from_str(&text) {
+            Ok(_) => {
+                // Clear parse error highlighting from the buffer.
+                let clear_start = restore_buf.start_iter();
+                let clear_end = restore_buf.end_iter();
+                restore_buf.remove_tag(&restore_error_tag, &clear_start, &clear_end);
+
+                // Parse succeeded — rebuild sections and restore GUI.
+                if let Some(tool) = restore_tools.get(restore_tool_index) {
+                    // Remove the old sections page from the stack.
+                    if let Some(old_child) = restore_stack.child_by_name("sections") {
+                        restore_stack.remove(&old_child);
+                    }
+                    // Build new sections widget from current tool state.
+                    if let Some(new_sections) = build_niri_sections(&**tool, &restore_buf) {
+                        restore_stack.add_titled(&new_sections, Some("sections"), "Sections");
+                        restore_stack.set_visible_child_name("sections");
+                    } else {
+                        restore_stack.set_visible_child_name("raw");
+                    }
+                }
+            }
+            Err(err) => {
+                // Still failing — update the error display in the fallback view.
+                // Clear old highlight first.
+                let clear_start = restore_buf.start_iter();
+                let clear_end = restore_buf.end_iter();
+                restore_buf.remove_tag(&restore_error_tag, &clear_start, &clear_end);
+
+                if let Some(diag) = err.diagnostics.first() {
+                    let msg = diag.message.clone().unwrap_or_default();
+                    let help = diag.help.clone().unwrap_or_default();
+                    let detail = if help.is_empty() {
+                        msg
+                    } else {
+                        format!("{msg}\n\nSuggestion: {help}")
+                    };
+                    restore_error_desc.set_text(&detail);
+
+                    // Highlight the new error span.
+                    let offset = diag.span.offset();
+                    let len = diag.span.len().max(1);
+                    let hi_start = restore_buf.iter_at_offset(offset as i32);
+                    let hi_end = restore_buf.iter_at_offset((offset + len) as i32);
+                    restore_buf.apply_tag(&restore_error_tag, &hi_start, &hi_end);
+                } else {
+                    restore_error_desc.set_text("Unknown parsing error");
+                }
+                // Make sure we stay on the fallback view.
+                restore_stack.set_visible_child_name("fallback");
+            }
+        }
     });
 
     (vbox, banner, text_view)
