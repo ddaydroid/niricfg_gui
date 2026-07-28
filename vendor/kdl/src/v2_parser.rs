@@ -5,18 +5,18 @@ use std::{
 
 use miette::{Severity, SourceSpan};
 
-use num::CheckedMul;
+use num_traits::CheckedMul;
 use winnow::{
-    ascii::{digit1, hex_digit1, oct_digit1, Caseless},
+    LocatingSlice,
+    ascii::{Caseless, digit1, hex_digit1, oct_digit1},
     combinator::{
         alt, cut_err, empty, eof, fail, not, opt, peek, preceded, repeat, repeat_till, separated,
         terminated, trace,
     },
-    error::{AddContext, ErrMode, ErrorKind, FromExternalError, FromRecoverableError, ParserError},
+    error::{AddContext, ErrMode, FromExternalError, FromRecoverableError, ParserError},
     prelude::*,
     stream::{AsChar, Location, Recover, Recoverable, Stream},
     token::{any, none_of, one_of, take_while},
-    LocatingSlice,
 };
 
 use crate::{
@@ -24,10 +24,10 @@ use crate::{
     KdlIdentifier, KdlNode, KdlNodeFormat, KdlValue,
 };
 
-type Input<'a> = Recoverable<LocatingSlice<&'a str>, KdlParseError>;
-type PResult<T> = winnow::PResult<T, KdlParseError>;
+type Input<'a> = Recoverable<LocatingSlice<&'a str>, ErrMode<KdlParseError>>;
+type PResult<T> = winnow::ModalResult<T, KdlParseError>;
 
-pub(crate) fn try_parse<'a, P: Parser<Input<'a>, T, KdlParseError>, T>(
+pub(crate) fn try_parse<'a, P: ModalParser<Input<'a>, T, KdlParseError>, T>(
     mut parser: P,
     input: &'a str,
 ) -> Result<T, KdlError> {
@@ -39,12 +39,14 @@ pub(crate) fn try_parse<'a, P: Parser<Input<'a>, T, KdlParseError>, T>(
     }
 }
 
-pub(crate) fn failure_from_errs(errs: Vec<KdlParseError>, input: &str) -> KdlError {
+pub(crate) fn failure_from_errs(errs: Vec<ErrMode<KdlParseError>>, input: &str) -> KdlError {
     let src = Arc::new(String::from(input));
     KdlError {
         input: src.clone(),
         diagnostics: errs
             .into_iter()
+            // The parser is only called with &str so this should never panic.
+            .map(|e| e.into_inner().unwrap())
             .map(|e| KdlDiagnostic {
                 input: src.clone(),
                 span: e.span.unwrap_or_else(|| (0usize..0usize).into()),
@@ -103,7 +105,8 @@ pub(crate) struct KdlParseError {
 }
 
 impl<I: Stream> ParserError<I> for KdlParseError {
-    fn from_error_kind(_input: &I, _kind: ErrorKind) -> Self {
+    type Inner = Self;
+    fn from_input(_input: &I) -> Self {
         Self {
             message: None,
             span: None,
@@ -113,13 +116,12 @@ impl<I: Stream> ParserError<I> for KdlParseError {
         }
     }
 
-    fn append(
-        self,
-        _input: &I,
-        _token_start: &<I as Stream>::Checkpoint,
-        _kind: ErrorKind,
-    ) -> Self {
+    fn append(self, _input: &I, _token_start: &<I as Stream>::Checkpoint) -> Self {
         self
+    }
+
+    fn into_inner(self) -> Result<Self, Self> {
+        Ok(self)
     }
 }
 
@@ -139,8 +141,8 @@ impl<I: Stream> AddContext<I, KdlParseContext> for KdlParseError {
 }
 
 impl<'a> FromExternalError<Input<'a>, ParseIntError> for KdlParseError {
-    fn from_external_error(_: &Input<'a>, _kind: ErrorKind, e: ParseIntError) -> Self {
-        KdlParseError {
+    fn from_external_error(_: &Input<'a>, e: ParseIntError) -> Self {
+        Self {
             span: None,
             message: Some(format!("{e}")),
             label: Some("invalid integer".into()),
@@ -151,8 +153,8 @@ impl<'a> FromExternalError<Input<'a>, ParseIntError> for KdlParseError {
 }
 
 impl<'a> FromExternalError<Input<'a>, ParseFloatError> for KdlParseError {
-    fn from_external_error(_input: &Input<'a>, _kind: ErrorKind, e: ParseFloatError) -> Self {
-        KdlParseError {
+    fn from_external_error(_input: &Input<'a>, e: ParseFloatError) -> Self {
+        Self {
             span: None,
             label: Some("invalid float".into()),
             help: None,
@@ -165,12 +167,8 @@ impl<'a> FromExternalError<Input<'a>, ParseFloatError> for KdlParseError {
 struct NegativeUnsignedError;
 
 impl<'a> FromExternalError<Input<'a>, NegativeUnsignedError> for KdlParseError {
-    fn from_external_error(
-        _input: &Input<'a>,
-        _kind: ErrorKind,
-        _e: NegativeUnsignedError,
-    ) -> Self {
-        KdlParseError {
+    fn from_external_error(_input: &Input<'a>, _e: NegativeUnsignedError) -> Self {
+        Self {
             span: None,
             message: Some("Tried to parse a negative number as an unsigned integer".into()),
             label: Some("negative unsigned int".into()),
@@ -200,7 +198,7 @@ fn span_from_checkpoint<I: Stream + Location>(
     start: &<I as Stream>::Checkpoint,
 ) -> SourceSpan {
     let offset = input.offset_from(start);
-    ((input.location() - offset)..input.location()).into()
+    ((input.current_token_start() - offset)..input.current_token_start()).into()
 }
 
 // This is just like the standard .resume_after(), except we only resume on Cut errors.
@@ -210,7 +208,7 @@ fn resume_after_cut<Input, Output, Error, ParseNext, ParseRecover>(
 ) -> impl Parser<Input, Option<Output>, Error>
 where
     Input: Stream + Recover<Error>,
-    Error: FromRecoverableError<Input, Error>,
+    Error: FromRecoverableError<Input, Error> + ParserError<Input>,
     ParseNext: Parser<Input, Output, Error>,
     ParseRecover: Parser<Input, (), Error>,
 {
@@ -223,21 +221,21 @@ fn resume_after_cut_inner<P, R, I, O, E>(
     parser: &mut P,
     recover: &mut R,
     i: &mut I,
-) -> winnow::PResult<Option<O>, E>
+) -> Result<Option<O>, E>
 where
     P: Parser<I, O, E>,
     R: Parser<I, (), E>,
     I: Stream,
     I: Recover<E>,
-    E: FromRecoverableError<I, E>,
+    E: FromRecoverableError<I, E> + ParserError<I>,
 {
     let token_start = i.checkpoint();
     let mut err = match parser.parse_next(i) {
         Ok(o) => {
             return Ok(Some(o));
         }
-        Err(ErrMode::Incomplete(e)) => return Err(ErrMode::Incomplete(e)),
-        Err(ErrMode::Backtrack(e)) => return Err(ErrMode::Backtrack(e)),
+        Err(e) if e.is_incomplete() => return Err(e),
+        Err(e) if e.is_backtrack() => return Err(e),
         Err(err) => err,
     };
     let err_start = i.checkpoint();
@@ -250,7 +248,7 @@ where
     }
 
     i.reset(&err_start);
-    err = err.map(|err| E::from_recoverable_error(&token_start, &err_start, i, err));
+    err = E::from_recoverable_error(&token_start, &err_start, i, err);
     Err(err)
 }
 
@@ -272,22 +270,22 @@ pub(crate) fn document(input: &mut Input<'_>) -> PResult<KdlDocument> {
     if badend {
         document.parse_next(input)?;
     }
-    if let Some(bom) = bom {
-        if let Some(fmt) = doc.format_mut() {
-            fmt.leading = format!("{bom}{}", fmt.leading);
-        }
+    if let Some(bom) = bom
+        && let Some(fmt) = doc.format_mut()
+    {
+        fmt.leading = format!("{bom}{}", fmt.leading);
     }
     Ok(doc)
 }
 
 /// `nodes := (line-space* node)* line-space*`
 fn nodes(input: &mut Input<'_>) -> PResult<KdlDocument> {
-    let leading = repeat(0.., alt((line_space.void(), (slashdash, base_node).void())))
+    let mut leading = repeat(0.., alt((line_space.void(), (slashdash, base_node).void())))
         .map(|()| ())
         .take()
         .parse_next(input)?;
     let _start = input.checkpoint();
-    let ns: Vec<KdlNode> = separated(
+    let mut ns: Vec<KdlNode> = separated(
         0..,
         node,
         alt((node_terminator.void(), (eof.void(), any.void()).void())),
@@ -299,6 +297,16 @@ fn nodes(input: &mut Input<'_>) -> PResult<KdlDocument> {
         .map(|()| ())
         .take()
         .parse_next(input)?;
+
+    // If there is a node, let it have the leading format
+    // This gives more consistent behavior
+    if let Some(first_node) = ns.get_mut(0)
+        && let Some(first_node_format) = first_node.format_mut()
+    {
+        first_node_format.leading = leading.into();
+        leading = "";
+    }
+
     Ok(KdlDocument {
         nodes: ns,
         format: Some(KdlDocumentFormat {
@@ -372,12 +380,12 @@ fn base_node(input: &mut Input<'_>) -> PResult<KdlNode> {
     // _both_ the error message for a string/ident parser error _and_ the error
     // message for a node name being expected.
     if !name_is_valid {
-        resume_after_cut(|input: &mut Input<'_>| -> PResult<()> {
+        resume_after_cut((|input: &mut Input<'_>| -> PResult<()> {
                 Err(ErrMode::Cut(KdlParseError {
                    span: Some(span_from_checkpoint(input, &_before_ident)),
                    ..Default::default()
                 }))
-            }.context(cx().msg("Found invalid node name")
+            }).context(cx().msg("Found invalid node name")
                           .lbl("node name")
                           .hlp("This can be any string type, including a quoted, raw, or multiline string, as well as a plain identifier string.")),
         empty).parse_next(input)?;
@@ -406,6 +414,7 @@ fn base_node(input: &mut Input<'_>) -> PResult<KdlNode> {
         )
             .parse_next(input)?
     };
+    node_space0.parse_next(input)?;
     let (before_inner_ty, ty, after_inner_ty) = ty.unwrap_or_default();
     let (before_children, children) = children
         .map(|(before_children, children)| (before_children.into(), Some(children)))
@@ -439,11 +448,13 @@ fn test_node() {
             name: KdlIdentifier {
                 value: "foo".into(),
                 repr: Some("foo".into()),
+                #[cfg(feature = "span")]
                 span: (0..3).into()
             },
             entries: vec![],
             children: None,
             format: Some(Default::default()),
+            #[cfg(feature = "span")]
             span: (0..7).into()
         }
     );
@@ -455,6 +466,7 @@ fn test_node() {
             name: KdlIdentifier {
                 value: "foo".into(),
                 repr: Some("foo".into()),
+                #[cfg(feature = "span")]
                 span: (0..3).into()
             },
             entries: vec![KdlEntry {
@@ -466,12 +478,14 @@ fn test_node() {
                     leading: " ".into(),
                     ..Default::default()
                 }),
+                #[cfg(feature = "span")]
                 span: SourceSpan::new(3.into(), 4)
             }],
             children: None,
             format: Some(KdlNodeFormat {
                 ..Default::default()
             }),
+            #[cfg(feature = "span")]
             span: (0..8).into()
         }
     );
@@ -552,7 +566,6 @@ fn node_entry(input: &mut Input<'_>) -> PResult<Option<KdlEntry>> {
                 fmt.after_key = after_key.into();
                 fmt.after_eq = after_eq.into();
             }
-            #[cfg(feature = "span")]
             value
         })
     } else if let Some(ident) = maybe_ident {
@@ -607,6 +620,7 @@ fn entry_test() {
                 value_repr: "bar".into(),
                 ..Default::default()
             }),
+            #[cfg(feature = "span")]
             span: (0..7).into()
         })
     );
@@ -621,6 +635,7 @@ fn entry_test() {
                 value_repr: "foo".into(),
                 ..Default::default()
             }),
+            #[cfg(feature = "span")]
             span: (0..3).into()
         })
     );
@@ -636,6 +651,7 @@ fn entry_test() {
                 leading: "/-foo ".into(),
                 ..Default::default()
             }),
+            #[cfg(feature = "span")]
             span: (6..9).into()
         })
     );
@@ -648,6 +664,7 @@ fn entry_test() {
             name: Some(KdlIdentifier {
                 value: "bar".into(),
                 repr: Some("bar".into()),
+                #[cfg(feature = "span")]
                 span: (9..12).into(),
             }),
             format: Some(KdlEntryFormat {
@@ -657,6 +674,7 @@ fn entry_test() {
                 after_eq: " ".into(),
                 ..Default::default()
             }),
+            #[cfg(feature = "span")]
             span: (9..16).into()
         })
     );
@@ -669,6 +687,7 @@ fn entry_test() {
             name: Some(KdlIdentifier {
                 value: "bar".into(),
                 repr: Some("bar".into()),
+                #[cfg(feature = "span")]
                 span: (12..16).into(),
             }),
             format: Some(KdlEntryFormat {
@@ -678,6 +697,7 @@ fn entry_test() {
                 after_eq: " ".into(),
                 ..Default::default()
             }),
+            #[cfg(feature = "span")]
             span: (12..18).into()
         })
     );
@@ -734,12 +754,12 @@ fn around_children_test() {
 /// `node-children := '{' nodes final-node? '}'`
 fn node_children(input: &mut Input<'_>) -> PResult<KdlDocument> {
     let _before_open = input.checkpoint();
-    let _before_open_loc = input.location();
+    let _before_open_loc = input.current_token_start();
     "{".parse_next(input)?;
-    let _after_open_loc = input.location();
+    let _after_open_loc = input.previous_token_end();
     let ns = trace("child nodes", nodes).parse_next(input)?;
     let _after_nodes = input.checkpoint();
-    let _after_nodes_loc = input.location();
+    let _after_nodes_loc = input.previous_token_end();
     let close_res: PResult<_> = cut_err("}")
         .context(cx().msg("No closing '}' for child block").lbl("closed"))
         .parse_next(input);
@@ -749,10 +769,7 @@ fn node_children(input: &mut Input<'_>) -> PResult<KdlDocument> {
             .or_else(|mut e: ErrMode<KdlParseError>| {
                 e = match e {
                     ErrMode::Cut(mut pe) => {
-                        #[cfg(feature = "span")]
-                        {
-                            pe.span = Some((_before_open_loc.._after_open_loc).into());
-                        }
+                        pe.span = Some((_before_open_loc.._after_open_loc).into());
                         ErrMode::Cut(pe)
                     }
                     e => return Err(e),
@@ -948,13 +965,10 @@ fn unambiguous_ident(input: &mut Input<'_>) -> PResult<()> {
         cut_err(
             repeat(1.., identifier_char)
                 .verify_map(|s: String| {
-                    if s == "true"
-                        || s == "false"
-                        || s == "null"
-                        || s == "inf"
-                        || s == "-inf"
-                        || s == "nan"
-                    {
+                    if matches!(
+                        s.as_str(),
+                        "true" | "false" | "null" | "inf" | "-inf" | "nan"
+                    ) {
                         None
                     } else {
                         Some(s)
@@ -1250,7 +1264,7 @@ fn escaped_char(input: &mut Input<'_>) -> PResult<char> {
 /// multi-line-raw-string-body := (unicode - disallowed-literal-code-points)*?
 /// ```
 fn raw_string(input: &mut Input<'_>) -> PResult<KdlValue> {
-    let _start_loc = input.location();
+    let _start_loc = input.current_token_start();
     let hashes: String = repeat(1.., "#").parse_next(input)?;
     let quotes = alt((("\"\"\"", newline).take(), "\"")).parse_next(input)?;
     let is_multiline = quotes.len() > 1;
@@ -1347,7 +1361,7 @@ fn raw_string(input: &mut Input<'_>) -> PResult<KdlValue> {
     if body == "\"" {
         Err(ErrMode::Cut(KdlParseError {
             message: Some("Single-line raw strings cannot look like multi-line ones".into()),
-            span: Some((_start_loc..input.location()).into()),
+            span: Some((_start_loc..input.previous_token_end()).into()),
             label: Some("triple quotes".into()),
             help: Some("Consider using a regular escaped string if all you want is a single quote: \"\\\"\"".into()),
             severity: Some(Severity::Error),
@@ -1453,9 +1467,11 @@ mod string_tests {
             Some(KdlValue::String("\"\"\"".into()))
         );
 
-        assert!(string
-            .parse(new_input("\"\"\"\nfoo\n  bar\n  baz\n  \"\"\""))
-            .is_err());
+        assert!(
+            string
+                .parse(new_input("\"\"\"\nfoo\n  bar\n  baz\n  \"\"\""))
+                .is_err()
+        );
     }
 
     #[test]
@@ -1493,9 +1509,11 @@ mod string_tests {
                 .unwrap(),
             Some(KdlValue::String("foo\n  \\nbar\n baz".into()))
         );
-        assert!(string
-            .parse(new_input("#\"\"\"\nfoo\n  bar\n  baz\n  \"\"\"#"))
-            .is_err());
+        assert!(
+            string
+                .parse(new_input("#\"\"\"\nfoo\n  bar\n  baz\n  \"\"\"#"))
+                .is_err()
+        );
 
         assert!(string.parse(new_input("#\"\nfoo\nbar\nbaz\n\"#")).is_err());
         assert!(string.parse(new_input("\"\nfoo\nbar\nbaz\n\"")).is_err());
@@ -1508,6 +1526,7 @@ mod string_tests {
             KdlIdentifier {
                 value: "foo".into(),
                 repr: Some("foo".into()),
+                #[cfg(feature = "span")]
                 span: (0..3).into()
             }
         );
@@ -1516,6 +1535,7 @@ mod string_tests {
             KdlIdentifier {
                 value: "+.".into(),
                 repr: Some("+.".into()),
+                #[cfg(feature = "span")]
                 span: (0..1).into()
             }
         )
@@ -1683,9 +1703,11 @@ fn multi_line_comment_test() {
     assert!(multi_line_comment.parse(new_input("/*\nfoo*/")).is_ok());
     assert!(multi_line_comment.parse(new_input("/*foo\n*/")).is_ok());
     assert!(multi_line_comment.parse(new_input("/* foo\n*/")).is_ok());
-    assert!(multi_line_comment
-        .parse(new_input("/* /*bar*/ foo\n*/"))
-        .is_ok());
+    assert!(
+        multi_line_comment
+            .parse(new_input("/* /*bar*/ foo\n*/"))
+            .is_ok()
+    );
 }
 
 /// slashdash := '/-' (node-space | line-space)*
@@ -1708,15 +1730,18 @@ fn slashdash_tests() {
     assert!(node_entry.parse(new_input("/-commented tada")).is_ok());
     assert!(node.parse(new_input("foo /- { }")).is_ok());
     assert!(node.parse(new_input("foo /- { bar }")).is_ok());
-    assert!(node
-        .parse(new_input("/- foo bar\nnode /-1 2 { x }"))
-        .is_ok());
-    assert!(node
-        .parse(new_input("/- foo bar\nnode 2 /-3 { x }"))
-        .is_ok());
-    assert!(node
-        .parse(new_input("/- foo bar\nnode /-1 2 /-3 { x }"))
-        .is_ok());
+    assert!(
+        node.parse(new_input("/- foo bar\nnode /-1 2 { x }"))
+            .is_ok()
+    );
+    assert!(
+        node.parse(new_input("/- foo bar\nnode 2 /-3 { x }"))
+            .is_ok()
+    );
+    assert!(
+        node.parse(new_input("/- foo bar\nnode /-1 2 /-3 { x }"))
+            .is_ok()
+    );
 }
 
 /// `number := keyword-number | hex | octal | binary | decimal`
@@ -2015,7 +2040,9 @@ macro_rules! impl_from_str_radix {
     };
 }
 
-impl_from_str_radix!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize);
+impl_from_str_radix!(
+    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize
+);
 
 trait MaybeNegatable: CheckedMul {
     fn negated(&self) -> Option<Self>;
@@ -2075,7 +2102,7 @@ mod failure_tests {
     #[test]
     fn bad_node_name_test() -> miette::Result<()> {
         let input = Arc::new("foo { bar; { baz; }; }".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // super::_print_diagnostic(res);
         // return Ok(());
         assert_eq!(
@@ -2095,7 +2122,7 @@ mod failure_tests {
             ))
         );
         let input = Arc::new("no/de 1 {\n    1 2 foo\n    bad#\n}".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // super::_print_diagnostic(res);
         // return Ok(());
         assert_eq!(
@@ -2152,7 +2179,7 @@ mod failure_tests {
     #[test]
     fn bad_entry_number_test() -> miette::Result<()> {
         let input = Arc::new("node 1asdf 2".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // super::_print_diagnostic(res);
         // return Ok(());
         assert_eq!(
@@ -2171,7 +2198,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node 0x1asdf 2".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2188,7 +2215,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node 0o1asdf 2".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2205,7 +2232,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node 0b1asdf 2".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2222,7 +2249,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node 1.0asdf 2".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2239,7 +2266,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node 1.asdf 2".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2256,7 +2283,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node 1.0easdf 2".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2282,7 +2309,7 @@ mod failure_tests {
     #[test]
     fn bad_string_test() -> miette::Result<()> {
         let input = Arc::new("node \" 1".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2299,7 +2326,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node \"foo\"1".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // if let Err(e) = res {
         //     println!("{:?}", miette::Report::from(e));
         // }
@@ -2319,7 +2346,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node \"\nlet's do multiline!\"".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         assert_eq!(
             res,
             Err(mkfail(
@@ -2350,7 +2377,7 @@ mod failure_tests {
     #[test]
     fn bad_child_test() -> miette::Result<()> {
         let input = Arc::new("node {".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // _print_diagnostic(res);
         // return Ok(());
         assert_eq!(
@@ -2369,7 +2396,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node {}}".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // _print_diagnostic(res);
         // return Ok(());
         // println!("{res:#?}");
@@ -2389,7 +2416,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node }{".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // _print_diagnostic(res);
         // return Ok(());
         assert_eq!(
@@ -2440,7 +2467,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node {\n".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // _print_diagnostic(res);
         // return Ok(());
         assert_eq!(
@@ -2469,7 +2496,7 @@ mod failure_tests {
         );
 
         let input = Arc::new("node {\nnode2{{}}".to_string());
-        let res: Result<KdlDocument, KdlError> = input.parse();
+        let res: Result<KdlDocument, KdlError> = KdlDocument::parse_v2(&input);
         // _print_diagnostic(res);
         // return Ok(());
         println!("{res:#?}");

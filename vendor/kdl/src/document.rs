@@ -193,7 +193,7 @@ impl KdlDocument {
         &mut self.nodes
     }
 
-    /// Gets the formatting details for this entry.
+    /// Gets the formatting details (including whitespace and comments) for this entry.
     pub fn format(&self) -> Option<&KdlDocumentFormat> {
         self.format.as_ref()
     }
@@ -210,7 +210,7 @@ impl KdlDocument {
 
     /// Length of this document when rendered as a string.
     pub fn len(&self) -> usize {
-        format!("{}", self).len()
+        format!("{self}").len()
     }
 
     /// Returns true if this document is completely empty (including whitespace)
@@ -347,13 +347,13 @@ impl KdlDocument {
     pub fn parse(s: &str) -> Result<Self, KdlError> {
         #[cfg(not(feature = "v1-fallback"))]
         {
-            KdlDocument::parse_v2(s)
+            Self::parse_v2(s)
         }
         #[cfg(feature = "v1-fallback")]
         {
             let v2_res = KdlDocument::parse_v2(s);
             if v2_res.is_err() {
-                let v1_res = KdlDocument::parse_v2(s);
+                let v1_res = KdlDocument::parse_v1(s);
                 if v1_res.is_ok() || detect_v1(s) {
                     v1_res
                 } else {
@@ -390,7 +390,7 @@ impl KdlDocument {
     }
 
     /// Takes a KDL v2 document string and returns the same document, but
-    /// autoformatted into valid KDL v2 syntax.
+    /// autoformatted into valid KDL v1 syntax.
     #[cfg(feature = "v1")]
     pub fn v2_to_v1(s: &str) -> Result<String, KdlError> {
         let mut doc = KdlDocument::parse_v2(s)?;
@@ -457,7 +457,7 @@ impl KdlDocument {
 #[cfg(feature = "v1")]
 impl From<kdlv1::KdlDocument> for KdlDocument {
     fn from(value: kdlv1::KdlDocument) -> Self {
-        KdlDocument {
+        Self {
             nodes: value.nodes().iter().map(|x| x.clone().into()).collect(),
             format: Some(KdlDocumentFormat {
                 leading: value.leading().unwrap_or("").into(),
@@ -522,7 +522,7 @@ impl std::str::FromStr for KdlDocument {
     type Err = KdlError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        KdlDocument::parse(s)
+        Self::parse(s)
     }
 }
 
@@ -539,13 +539,13 @@ impl KdlDocument {
         indent: usize,
     ) -> std::fmt::Result {
         if let Some(KdlDocumentFormat { leading, .. }) = self.format() {
-            write!(f, "{}", leading)?;
+            write!(f, "{leading}")?;
         }
         for node in &self.nodes {
             node.stringify(f, indent)?;
         }
         if let Some(KdlDocumentFormat { trailing, .. }) = self.format() {
-            write!(f, "{}", trailing)?;
+            write!(f, "{trailing}")?;
         }
         Ok(())
     }
@@ -669,12 +669,13 @@ final;";
             doc.iter_dash_args("foo").collect::<Vec<&KdlValue>>(),
             vec![&1.into(), &2.into(), &"three".into()]
         );
-        assert_eq!(
-            doc.format().map(|f| &f.leading[..]),
-            Some("\n// This is the first node\n")
-        );
+        assert_eq!(doc.format().map(|f| &f.leading[..]), Some(""));
 
         let foo = doc.get("foo").expect("expected a foo node");
+        assert_eq!(
+            foo.format().map(|f| &f.leading[..]),
+            Some("\n// This is the first node\n")
+        );
         assert_eq!(foo.format().map(|f| &f.terminator[..]), Some("\n"));
         assert_eq!(&foo[2], &"three".into());
         assert_eq!(&foo["bar"], &"baz".into());
@@ -695,21 +696,21 @@ final;";
 
         let bar = doc.get("bar").expect("expected a bar node");
         assert_eq!(
-            format!("{}", bar),
+            format!("{bar}"),
             "\n         bar \"indented\" // trailing whitespace after this\t\n"
         );
 
         let a = doc.get("a").expect("expected a node");
         assert_eq!(
-            format!("{}", a),
+            format!("{a}"),
             "/*\nSome random comment\n */\n\na;".to_string()
         );
 
         let b = doc.get("b").expect("expected a node");
-        assert_eq!(format!("{}", b), " b;".to_string());
+        assert_eq!(format!("{b}"), " b;".to_string());
 
         // Round-tripping works.
-        assert_eq!(format!("{}", doc), src);
+        assert_eq!(format!("{doc}"), src);
 
         // Programmatic manipulation works.
         let mut node: KdlNode = "new\n".parse()?;
@@ -720,7 +721,7 @@ final;";
         doc.nodes_mut().push(node);
 
         assert_eq!(
-            format!("{}", doc),
+            format!("{doc}"),
             format!("{}new \"blah\"=0xDEADbeef\n", src)
         );
 
@@ -753,7 +754,7 @@ bar prop=value 1 2 #false #null {
 }
 baz
 "#,
-            format!("{}", doc)
+            format!("{doc}")
         );
     }
 

@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.70.0"
+edition = "2024"
+rust-version = "1.95"
 name = "kdl"
-version = "6.3.0"
+version = "6.7.1"
 authors = [
     "Kat Marchán <kzm@zkat.tech>",
     "KDL Community",
@@ -43,9 +43,14 @@ rustdoc-args = [
     "docsrs",
 ]
 
-[profile.dist]
-lto = "thin"
-inherits = "release"
+[features]
+default = [
+    "span",
+    "serde",
+]
+span = []
+v1 = ["kdlv1"]
+v1-fallback = ["v1"]
 
 [lib]
 name = "kdl"
@@ -73,30 +78,41 @@ optional = true
 package = "kdl"
 
 [dependencies.miette]
-version = "7.2.0"
+version = "7.6.0"
+default-features = false
 
-[dependencies.num]
-version = "0.4.2"
+[dependencies.num-traits]
+version = "0.2.19"
 
-[dependencies.thiserror]
-version = "1.0.40"
+[dependencies.serde]
+version = "1.0.210"
+optional = true
 
 [dependencies.winnow]
-version = "0.6.20"
+version = "0.7.13"
 features = [
     "alloc",
     "unstable-recover",
 ]
 
 [dev-dependencies.miette]
-version = "7.2.0"
-features = ["fancy"]
+version = "7.6.0"
+features = [
+    "derive",
+    "fancy",
+]
+default-features = false
 
 [dev-dependencies.pretty_assertions]
 version = "1.3.0"
 
-[features]
-default = ["span"]
-span = []
-v1 = ["kdlv1"]
-v1-fallback = ["v1"]
+[dev-dependencies.serde]
+version = "1.0.210"
+features = ["derive"]
+
+[dev-dependencies.thiserror]
+version = "2.0.12"
+
+[profile.dist]
+lto = "thin"
+inherits = "release"

@@ -107,12 +107,12 @@
 //!
 //! * `span` (default) - Includes spans in the various document-related structs.
 //! * `v1` - Adds support for v1 parsing. This will pull in the entire previous
-//!     version of `kdl-rs`, and so may be fairly heavy.
+//!   version of `kdl-rs`, and so may be fairly heavy.
 //! * `v1-fallback` - Implies `v1`. Makes it so the various `*::parse()` and
-//!     `FromStr` implementations try to parse their inputs as `v2`, and, if that
-//!     fails, try again with `v1`. For `KdlDocument`, a heuristic will be applied
-//!     if both `v1` and `v2` parsers fail, to pick which error(s) to return. For
-//!     other types, only the `v2` parser's errors will be returned.
+//!   `FromStr` implementations try to parse their inputs as `v2`, and, if that
+//!   fails, try again with `v1`. For `KdlDocument`, a heuristic will be applied
+//!   if both `v1` and `v2` parsers fail, to pick which error(s) to return. For
+//!   other types, only the `v2` parser's errors will be returned.
 //!
 //! ## Quirks
 //!
@@ -138,9 +138,9 @@
 //!   representation will be thrown away and the actual value will be used when
 //!   serializing.
 //!
-//! ## Minimum Supported Rust Version
+//! ## Minimum Supported Rust Version (MSRV)
 //!
-//! You must be at least `1.70.0` tall to get on this ride.
+//! You must be at least `1.95` tall to get on this ride.
 //!
 //! ## License
 //!
@@ -183,7 +183,6 @@
 #![deny(missing_debug_implementations, nonstandard_style)]
 #![warn(missing_docs, rust_2018_idioms, unreachable_pub)]
 #![cfg_attr(test, deny(warnings))]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![doc(html_favicon_url = "https://kdl.dev/favicon.ico")]
 #![doc(html_logo_url = "https://kdl.dev/logo.svg")]
 
@@ -209,3 +208,8 @@ mod node;
 mod value;
 
 mod v2_parser;
+
+#[cfg(feature = "serde")]
+pub mod de;
+#[cfg(feature = "serde")]
+pub mod se;

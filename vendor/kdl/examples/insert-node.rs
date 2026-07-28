@@ -29,7 +29,7 @@ words {
     word_nodes.sort_by(sort_by_name);
     words_section.autoformat();
 
-    println!("{}", doc);
+    println!("{doc}");
 
     // output:
     // words {
