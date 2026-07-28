@@ -519,6 +519,8 @@ fn build_editor_page(
     }
 
     stack.add_titled(&scrolled, Some("raw"), "Raw");
+    stack.add_titled(&diff_widget.paned, Some("diff"), "Diff");
+
     // --- Parser-fallback view (Wave 4 Step 15) ---
     // When the buffer text fails to parse as KDL, the stack switches to this
     // view instead of the sections/raw editor. The user sees the raw text
