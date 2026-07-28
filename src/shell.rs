@@ -655,11 +655,13 @@ fn build_editor_page(
 
         let timer_tools = tools_clone.clone();
         let timer_banner = banner_clone.clone();
+        let timer_shell = shell_state_c.clone();
 
         let id = glib::timeout_add_local(debounce_ms, move || {
             let validate_tools = timer_tools.clone();
             let validate_banner = timer_banner.clone();
             let validate_text = text.clone();
+            let validate_shell = timer_shell.clone();
 
             glib::MainContext::default().spawn_local(async move {
                 if let Some(tool) = validate_tools.get(tool_index) {
@@ -668,6 +670,7 @@ fn build_editor_page(
                             Ok(issues) => {
                                 if issues.is_empty() {
                                     validate_banner.set_revealed(false);
+                                    validate_shell.set_last_validation(None);
                                 } else {
                                     let count = issues.len();
                                     let title = if count == 1 {
@@ -682,11 +685,15 @@ fn build_editor_page(
                                     };
                                     validate_banner.set_title(&title);
                                     validate_banner.set_revealed(true);
+                                    validate_shell
+                                        .set_last_validation(Some(&format!("{count} issue(s)")));
                                 }
                             }
                             Err(e) => {
                                 validate_banner.set_title(&format!("Validation error: {e}"));
                                 validate_banner.set_revealed(true);
+                                validate_shell
+                                    .set_last_validation(Some(&format!("Validation error: {e}")));
                             }
                         }
                     }
@@ -969,7 +976,34 @@ pub fn run_shell(plugins: Vec<DynTool>) -> Result<(), Error> {
         let sidebar_header = adw::HeaderBar::new();
         sidebar_header.set_title_widget(Some(&gtk4::Label::new(Some("Plugins"))));
 
-        // Global diff toggle in the sidebar's titlebar.
+        // --- HeaderBar action buttons ---
+        // Undo / Redo on the left side.
+        let undo_btn = gtk4::Button::new();
+        undo_btn.set_icon_name("edit-undo-symbolic");
+        undo_btn.set_tooltip_text(Some("Undo last edit"));
+        sidebar_header.pack_start(&undo_btn);
+
+        let redo_btn = gtk4::Button::new();
+        redo_btn.set_icon_name("edit-redo-symbolic");
+        redo_btn.set_tooltip_text(Some("Redo last undone edit"));
+        sidebar_header.pack_start(&redo_btn);
+
+        // Save button on the right side (before Compare toggle).
+        let save_btn = gtk4::Button::new();
+        save_btn.set_icon_name("document-save-symbolic");
+        save_btn.set_tooltip_text(Some("Save changes to disk"));
+        save_btn.set_sensitive(false); // starts disabled (no edits yet)
+        sidebar_header.pack_end(&save_btn);
+
+        // Bind Save button sensitivity to ShellState's dirty flag.
+        // When is-dirty is true → save button is enabled.
+        // The `SYNC_CREATE` flag initialises the target property immediately.
+        shell_state
+            .bind_property("is-dirty", &save_btn, "sensitive")
+            .flags(glib::BindingFlags::SYNC_CREATE)
+            .build();
+
+        // Global diff toggle.
         let diff_toggle = gtk4::ToggleButton::with_label("Compare");
         diff_toggle.set_tooltip_text(Some(
             "Show side-by-side diff against saved version for all tabs",

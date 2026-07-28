@@ -62,10 +62,13 @@ impl ShellState {
     /// Mark the editor dirty or clean.
     ///
     /// Emits `"dirty-changed"` only when the value actually flips.
+    /// Also notifies the GObject property system so that property bindings
+    /// (e.g. Save button sensitivity bound to `"is-dirty"`) update.
     pub fn set_dirty(&self, dirty: bool) {
         let imp = self.imp();
         if imp.is_dirty.replace(dirty) != dirty {
             self.emit_by_name::<()>("dirty-changed", &[]);
+            self.notify("is-dirty");
         }
     }
 
@@ -77,11 +80,14 @@ impl ShellState {
     /// Set the active tool ID.
     ///
     /// Emits `"tool-changed"` only when the value actually changes.
+    /// Also notifies the GObject property system so that property bindings
+    /// on `"current-tool-id"` update.
     pub fn set_current_tool_id(&self, id: Option<&str>) {
         let imp = self.imp();
         let old = imp.current_tool_id.replace(id.map(String::from));
         if old.as_deref() != id {
             self.emit_by_name::<()>("tool-changed", &[]);
+            self.notify("current-tool-id");
         }
     }
 
@@ -91,8 +97,15 @@ impl ShellState {
     }
 
     /// Store the latest validation outcome.
+    ///
+    /// Notifies the GObject property system (only on actual change)
+    /// so that property bindings on `"last-validation"` update.
     pub fn set_last_validation(&self, result: Option<&str>) {
-        self.imp().last_validation.replace(result.map(String::from));
+        let imp = self.imp();
+        let old = imp.last_validation.replace(result.map(String::from));
+        if old.as_deref() != result {
+            self.notify("last-validation");
+        }
     }
 }
 

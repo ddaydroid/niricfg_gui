@@ -286,6 +286,7 @@ dependencies = [
  "kdl",
  "libadwaita",
  "notify",
+ "once_cell",
  "proptest",
  "tempfile",
  "thiserror",
