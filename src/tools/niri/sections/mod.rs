@@ -10,8 +10,10 @@
 //! KDL node, re-serialises, and writes back to the buffer. This triggers the
 //! shell's existing debounced validation loop.
 
+use adw::prelude::*;
 use gtk4::prelude::*;
 use kdl::{KdlDocument, KdlEntry, KdlValue};
+use libadwaita as adw;
 
 pub mod animations;
 pub mod binds;
@@ -133,6 +135,96 @@ pub fn set_kdl_value(doc: &mut KdlDocument, path: &[&str], value: &KdlValue) {
 /// Convenience: set an f64 value.
 pub fn set_kdl_f64(doc: &mut KdlDocument, path: &[&str], value: f64) {
     set_kdl_value(doc, path, &KdlValue::Float(value));
+}
+
+/// Wrap a list widget (e.g. PreferencesGroup) in a searchable Adw::ToolbarView.
+///
+/// Adds a GtkSearchBar with GtkSearchEntry to the bottom bar. When the user
+/// types, child rows whose title or subtitle do not contain the search text
+/// are hidden; matching rows stay visible. An empty search shows all rows.
+///
+/// This is a lightweight alternative to gtk::FilterListModel that works with
+/// the existing widget-per-row architecture (no gio::ListStore refactor needed).
+pub fn wrap_searchable(content: gtk4::Widget) -> gtk4::Widget {
+    let search_entry = gtk4::SearchEntry::new();
+    search_entry.set_placeholder_text(Some("Search…"));
+    search_entry.set_tooltip_text(Some("Type to filter rows"));
+
+    let search_bar = gtk4::SearchBar::new();
+    search_bar.set_child(Some(&search_entry));
+    search_bar.set_show_close_button(true);
+    search_bar.set_key_capture_widget(Some(&content));
+
+    // Connect search text changes to filter child visibility
+    search_entry.connect_search_changed({
+        let content = content.clone();
+        move |entry| {
+            let query = entry.text();
+            let query_lower = query.to_lowercase();
+
+            // Check if a row widget matches the search query.
+            fn row_matches_query(widget: &gtk4::Widget, query_lower: &str) -> bool {
+                // Check ExpanderRow title + subtitle (returns glib::GString directly)
+                if let Some(row) = widget.downcast_ref::<adw::ExpanderRow>() {
+                    let title = row.title().to_lowercase();
+                    let subtitle = row.subtitle().to_lowercase();
+                    if title.contains(query_lower) || subtitle.contains(query_lower) {
+                        return true;
+                    }
+                    // Check children recursively
+                    let mut child = row.first_child();
+                    while let Some(ref c) = child {
+                        if row_matches_query(c, query_lower) {
+                            return true;
+                        }
+                        child = c.next_sibling();
+                    }
+                    return false;
+                }
+                // Check ActionRow title + subtitle (returns Option<glib::GString>)
+                if let Some(row) = widget.downcast_ref::<adw::ActionRow>() {
+                    let title = row.title().to_lowercase();
+                    let subtitle = row.subtitle().map_or(String::new(), |s| s.to_lowercase());
+                    return title.contains(query_lower) || subtitle.contains(query_lower);
+                }
+                // Check EntryRow: title + text content
+                if let Some(entry_row) = widget.downcast_ref::<adw::EntryRow>() {
+                    let title = entry_row.title().to_lowercase();
+                    let text = entry_row.text().to_lowercase();
+                    return title.contains(query_lower) || text.contains(query_lower);
+                }
+                // Check SwitchRow: title + optional subtitle
+                if let Some(switch_row) = widget.downcast_ref::<adw::SwitchRow>() {
+                    let title = switch_row.title().to_lowercase();
+                    let subtitle = switch_row
+                        .subtitle()
+                        .map_or(String::new(), |s| s.to_lowercase());
+                    return title.contains(query_lower) || subtitle.contains(query_lower);
+                }
+                // Check SpinRow: title only
+                if let Some(spin_row) = widget.downcast_ref::<adw::SpinRow>() {
+                    let title = spin_row.title().to_lowercase();
+                    return title.contains(query_lower);
+                }
+                // Default: hide non-matching
+                false
+            }
+
+            // Filter direct children of the content widget
+            let mut child = content.first_child();
+            while let Some(ref c) = child {
+                let visible = query_lower.is_empty() || row_matches_query(c, &query_lower);
+                c.set_visible(visible);
+                child = c.next_sibling();
+            }
+        }
+    });
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.set_content(Some(&content));
+    toolbar.add_bottom_bar(&search_bar);
+
+    toolbar.upcast()
 }
 
 /// Read all text from a buffer as a String.

@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use crate::tools::niri::NiriTool;
 
-use super::get_buffer_text;
+use super::{get_buffer_text, wrap_searchable};
 
 /// Build the \"Workspaces\" section widget tree.
 ///
@@ -125,5 +125,5 @@ pub fn build_workspaces_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer)
         group.add(&ws_row);
     }
 
-    group.upcast()
+    wrap_searchable(group.upcast())
 }
