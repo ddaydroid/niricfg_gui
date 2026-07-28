@@ -28,18 +28,29 @@ pub fn build_layer_rules_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer
 
     let init_doc = tool.doc().unwrap_or_default();
 
-    // Find =layer-rules= node and its =match= children.
-    let layer_rules_node = init_doc
+    // Find =layer-rules= node and collect its =match= children.
+    // We clone the owned node to avoid E0515 (temporary reference in flat_map).
+    let layer_rules_owned = init_doc
         .nodes()
         .iter()
         .find(|n| n.name().value() == "layer-rules")
         .cloned();
-    let match_nodes: Vec<(usize, kdl::KdlNode)> = layer_rules_node
-        .iter()
-        .flat_map(|n| n.children().iter().flat_map(|c| c.nodes().iter().cloned()))
-        .enumerate()
-        .filter(|(_, n)| n.name().value() == "match")
-        .collect();
+    let match_nodes: Vec<(usize, kdl::KdlNode)> = match &layer_rules_owned {
+        Some(node) => {
+            if let Some(children) = node.children() {
+                children
+                    .nodes()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, n)| n.name().value() == "match")
+                    .map(|(i, n)| (i, n.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        None => Vec::new(),
+    };
 
     if match_nodes.is_empty() {
         let empty_label = gtk4::Label::new(Some("No layer rules configured"));

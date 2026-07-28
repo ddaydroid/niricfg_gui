@@ -34,7 +34,6 @@ pub fn get_kdl_str(doc: &KdlDocument, path: &[&str]) -> Option<String> {
         if i == path.len() - 1 {
             return node.entries().first().and_then(|e| match e.value() {
                 KdlValue::String(s) => Some(s.clone()),
-
                 KdlValue::Float(n) => Some(n.to_string()),
                 KdlValue::Integer(n) => Some(n.to_string()),
                 _ => None,
@@ -71,50 +70,60 @@ pub fn get_kdl_f64(doc: &KdlDocument, path: &[&str]) -> Option<f64> {
     None
 }
 
-/// Set a leaf node's first entry to a KDL value.
-pub fn set_kdl_value(doc: &mut KdlDocument, path: &[&str], value: &KdlValue) {
-    let mut node_indices: Vec<usize> = Vec::new();
-    let mut current = doc;
+/// Recursive helper: navigate to a leaf node by index path and set its entry.
+fn set_kdl_value_at(doc: &mut KdlDocument, indices: &[usize], entry: KdlEntry) {
+    if indices.len() == 1 {
+        let node = &mut doc.nodes_mut()[indices[0]];
+        if node.entries().is_empty() {
+            node.entries_mut().push(entry);
+        } else {
+            node.entries_mut()[0] = entry;
+        }
+    } else if let Some(children) = doc.nodes_mut()[indices[0]].children_mut() {
+        set_kdl_value_at(children, &indices[1..], entry);
+    }
+}
 
-    for &segment in path {
-        let pos = current
-            .nodes()
-            .iter()
-            .position(|n| n.name().value() == segment);
-        match pos {
-            Some(idx) => {
-                node_indices.push(idx);
-                if node_indices.len() < path.len() {
-                    if let Some(children) = current.nodes_mut()[idx].children_mut() {
-                        current = children;
-                    } else {
-                        return;
+/// Set a leaf node's first entry to a KDL value.
+///
+/// Navigation is done in two phases: first an immutable traversal collects
+/// node indices, then a recursive mutable traversal applies the change.
+/// This avoids borrow-checker conflicts from reassigning a `&mut` reference
+/// while it is still borrowed by `children_mut()`.
+pub fn set_kdl_value(doc: &mut KdlDocument, path: &[&str], value: &KdlValue) {
+    // Phase 1: immutable traversal — collect node indices.
+    let mut node_indices: Vec<usize> = Vec::new();
+    {
+        let mut current: &KdlDocument = doc;
+        for &segment in path {
+            let idx = current
+                .nodes()
+                .iter()
+                .position(|n| n.name().value() == segment);
+            match idx {
+                Some(i) => {
+                    node_indices.push(i);
+                    if node_indices.len() < path.len() {
+                        if let Some(c) = current.nodes()[i].children() {
+                            current = c;
+                        } else {
+                            return;
+                        }
                     }
                 }
+                None => return,
             }
-            None => return,
         }
     }
 
-    let mut cur = doc;
-    let last = path.len() - 1;
-    for (depth, &idx) in node_indices.iter().enumerate() {
-        if depth == last {
-            let node = &mut cur.nodes_mut()[idx];
-            let entry = match value {
-                KdlValue::Float(f) => KdlEntry::new(KdlValue::Float(*f)),
-                KdlValue::String(s) => KdlEntry::new(KdlValue::String(s.clone())),
-                _ => KdlEntry::new(value.clone()),
-            };
-            if node.entries().is_empty() {
-                node.entries_mut().push(entry);
-            } else {
-                node.entries_mut()[0] = entry;
-            }
-        } else if let Some(children) = cur.nodes_mut()[idx].children_mut() {
-            cur = children;
-        }
-    }
+    let entry = match value {
+        KdlValue::Float(f) => KdlEntry::new(KdlValue::Float(*f)),
+        KdlValue::String(s) => KdlEntry::new(KdlValue::String(s.clone())),
+        _ => KdlEntry::new(value.clone()),
+    };
+
+    // Phase 2: recursive mutable traversal.
+    set_kdl_value_at(doc, &node_indices, entry);
 }
 
 /// Convenience: set an f64 value.
