@@ -13,10 +13,13 @@
 use gtk4::prelude::*;
 use kdl::{KdlDocument, KdlEntry, KdlValue};
 
+pub mod animations;
+pub mod gestures;
 pub mod input;
 pub mod layer_rules;
 pub mod layout;
 pub mod output;
+pub mod startup;
 pub mod workspaces;
 
 // ---------------------------------------------------------------------------

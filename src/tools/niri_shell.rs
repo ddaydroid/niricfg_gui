@@ -54,6 +54,18 @@ fn build_shell_page(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Wi
     let layer_rules_group = sections::layer_rules::build_layer_rules_section(tool, text_buffer);
     vbox.append(&layer_rules_group);
 
+    // Animations section
+    let animations_group = sections::animations::build_animations_section(tool, text_buffer);
+    vbox.append(&animations_group);
+
+    // Gestures section
+    let gestures_group = sections::gestures::build_gestures_section(tool, text_buffer);
+    vbox.append(&gestures_group);
+
+    // Startup section
+    let startup_group = sections::startup::build_startup_section(tool, text_buffer);
+    vbox.append(&startup_group);
+
     clamp.set_child(Some(&vbox));
 
     let scrolled = gtk4::ScrolledWindow::new();
