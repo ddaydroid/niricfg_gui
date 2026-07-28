@@ -1,21 +1,21 @@
 //! Niri compositor validator. Implements the [`Validator`] trait by
-//! spawning `niri msg validate` via `async-process` and parsing its
-//! stdout / stderr into [`ValidationIssue`] structs.
+//! writing the caller's text to a temporary file and spawning
+//! `niri validate --config <tmpfile>` via `async-process`, then parsing
+//! its stdout / stderr into [`ValidationIssue`] structs.
 //!
 //! # Architecture
 //!
-//! The validator spawns `niri msg validate` via `async-process` and
-//! captures its stdout / stderr. Because `niri msg validate` validates
-//! the _live_ config (niri's currently loaded config, not the caller's
-//! text), the output may not correspond to the user's in-progress edits.
-//! This is a known v1 limitation — a Wave 3 enhancement can switch to
-//! `niri --config <tempfile> --validate` or `--stdin` when niri adds
-//! such a flag.
+//! The caller passes the editor-buffer content as `text`. The validator
+//! writes it to a [`tempfile::NamedTempFile`], spawns
+//! `niri validate --config <tmp_path>` via `async-process`, captures
+//! stdout/stderr, parses the output into issues, and cleans up the
+//! tempfile. This validates the **actual editor text** rather than
+//! the live compositor config, so validation results always correspond
+//! to the user's in-progress edits.
 //!
-//! The validator maps each output line to a `ValidationIssue` with a
-//! best-effort parser. If niri is not installed or not running, a
-//! warning-level issue is returned rather than failing the entire
-//! validation.
+//! If `niri` is not on `$PATH` or the subprocess fails, a warning-level
+//! issue is returned rather than failing the entire validation — the GUI
+//! remains usable in headless / non-niri environments.
 //!
 //! # Debounce
 //!
@@ -26,8 +26,8 @@
 //!
 //! # Output format (v1 heuristic)
 //!
-//! `niri msg validate` emits human-readable lines. The v1 parser uses a
-//! simple heuristic:
+//! `niri validate --config` emits human-readable lines. The v1 parser
+//! uses a simple heuristic:
 //!
 //! * Lines containing `"error"` or `"Error"` → `Severity::Error`.
 //! * Lines containing `"warning"` or `"Warning"` → `Severity::Warning`.
@@ -36,7 +36,7 @@
 //!   number (used for the `line` field). Lines without a recognised
 //!   prefix use `line: 0`.
 //!
-//! This heuristic is intentionally coarse — a later wave will switch to
+//! This heuristic is intentionally coarse — a later wave can switch to
 //! a machine-parseable format once niri exposes one.
 
 use std::time::Duration;
@@ -110,45 +110,50 @@ impl Validator for NiriValidator {
 
     fn validate_kdl<'a>(
         &'a self,
-        _text: &'a str,
+        text: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ValidationIssue>, Error>> {
-        // Spawn `niri msg validate` — this communicates with the running
-        // niri compositor instance via its socket. The command validates
-        // the currently-loaded config (not the caller's text). We capture
-        // its output for parsing.
+        // Write the editor text to a tempfile, spawn
+        // `niri validate --config <tmp_path>`, and parse the output.
+        // The tempfile is automatically cleaned up when `tmp` is dropped
+        // after the subprocess completes.
         //
-        // TODO(Wave 3): When niri adds a `--config` / `--stdin` flag for
-        // validating arbitrary text, pass the text directly to the
-        // subprocess. For now, niri validates its own loaded config — the
-        // result may not correspond to the user's in-progress edits, but
-        // it establishes the subprocess bridge and parse pipeline.
+        // This validates the **actual editor text** (not the live
+        // compositor config), so validation results always correspond
+        // to the user's in-progress edits. `niri validate --config`
+        // does NOT need a running niri instance — it only reads the
+        // file and exits, so validation works even in headless builds
+        // or on machines without niri running.
         //
-        // If niri is not running or the socket is unavailable, the
-        // command exits with a non-zero status and a human-readable
-        // error on stderr — we still capture and surface those as
-        // issues so the user sees "niri not running" in the shell's
-        // validation panel rather than a silent pass.
+        // If niri is not on `$PATH`, a warning-level issue is returned
+        // so the GUI remains usable in non-niri environments.
         Box::pin(async move {
+            let tmp = tempfile::NamedTempFile::new().map_err(Error::Io)?;
+            std::fs::write(tmp.path(), text).map_err(Error::Io)?;
+
+            let config_path = tmp
+                .path()
+                .to_str()
+                .ok_or_else(|| Error::Plugin("non-UTF-8 tempfile path".to_string()))?
+                .to_string();
+
             let output = async_process::Command::new("niri")
-                .args(["msg", "validate"])
+                .args(["validate", "--config", &config_path])
                 .output()
                 .await;
+
+            // Drop the tempfile after the subprocess finishes.
+            drop(tmp);
 
             match output {
                 Ok(out) => {
                     let issues = parse_niri_output(&out.stdout, &out.stderr)?;
                     Ok(issues)
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // niri binary is not installed. Return a warning-level
-                    // issue instead of failing — the user may be doing a
-                    // headless build or compiling on a non-niri machine.
-                    Ok(vec![ValidationIssue {
-                        line: 0,
-                        severity: Severity::Warning,
-                        message: "niri binary not found — validation skipped".to_string(),
-                    }])
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![ValidationIssue {
+                    line: 0,
+                    severity: Severity::Warning,
+                    message: "niri binary not found — validation skipped".to_string(),
+                }]),
                 Err(e) => Err(Error::Io(e)),
             }
         })
