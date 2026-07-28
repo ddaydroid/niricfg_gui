@@ -54,6 +54,10 @@ fn build_shell_page(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> gtk4::Wi
     let layer_rules_group = sections::layer_rules::build_layer_rules_section(tool, text_buffer);
     vbox.append(&layer_rules_group);
 
+    // Binds section
+    let binds_group = sections::binds::build_binds_section(tool, text_buffer);
+    vbox.append(&binds_group);
+
     // Animations section
     let animations_group = sections::animations::build_animations_section(tool, text_buffer);
     vbox.append(&animations_group);

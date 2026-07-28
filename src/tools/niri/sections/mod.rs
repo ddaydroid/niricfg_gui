@@ -14,6 +14,7 @@ use gtk4::prelude::*;
 use kdl::{KdlDocument, KdlEntry, KdlValue};
 
 pub mod animations;
+pub mod binds;
 pub mod gestures;
 pub mod input;
 pub mod layer_rules;
