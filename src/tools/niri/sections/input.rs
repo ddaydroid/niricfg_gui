@@ -12,7 +12,7 @@
 //! "Raw" text editor tab instead.
 
 use adw::prelude::*;
-use kdl::{KdlDocument, KdlEntry, KdlValue};
+use kdl::{KdlDocument, KdlValue};
 use libadwaita as adw;
 use std::str::FromStr;
 

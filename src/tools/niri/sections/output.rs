@@ -38,7 +38,7 @@ pub fn build_output_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
         .nodes()
         .iter()
         .filter(|n| n.name().value() == "output")
-        .filter_map(|n| {
+        .map(|n| {
             let name = n
                 .entries()
                 .first()
@@ -47,7 +47,7 @@ pub fn build_output_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
                     _ => None,
                 })
                 .unwrap_or_else(|| "unknown".to_string());
-            Some((name, n.clone()))
+            (name, n.clone())
         })
         .collect();
 
@@ -64,7 +64,7 @@ pub fn build_output_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer) -> 
 
     for (monitor_name, node) in &output_nodes {
         let monitor_row = adw::ExpanderRow::new();
-        monitor_row.set_title(&monitor_name);
+        monitor_row.set_title(monitor_name);
 
         // Scale SpinRow
         let scale_val = node

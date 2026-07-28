@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use crate::tools::niri::NiriTool;
 
-use super::{get_buffer_text, set_kdl_value};
+use super::get_buffer_text;
 
 /// Build the \"Workspaces\" section widget tree.
 ///
@@ -31,15 +31,13 @@ pub fn build_workspaces_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer)
     struct WsEntry {
         monitor: String,
         ws_num: f64,
-        node_idx: usize,
     }
 
     let ws_entries: Vec<WsEntry> = init_doc
         .nodes()
         .iter()
-        .enumerate()
-        .filter(|(_, n)| n.name().value() == "preferred-workspace-for-output")
-        .filter_map(|(i, n)| {
+        .filter(|n| n.name().value() == "preferred-workspace-for-output")
+        .map(|n| {
             let monitor = n
                 .entries()
                 .first()
@@ -58,11 +56,7 @@ pub fn build_workspaces_section(tool: &NiriTool, text_buffer: &gtk4::TextBuffer)
                     _ => None,
                 })
                 .unwrap_or(1.0);
-            Some(WsEntry {
-                monitor,
-                ws_num,
-                node_idx: i,
-            })
+            WsEntry { monitor, ws_num }
         })
         .collect();
 

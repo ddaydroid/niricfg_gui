@@ -11,7 +11,7 @@
 //! shell's existing debounced validation loop.
 
 use gtk4::prelude::*;
-use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
+use kdl::{KdlDocument, KdlEntry, KdlValue};
 
 pub mod input;
 pub mod layer_rules;
