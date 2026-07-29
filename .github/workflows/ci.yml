@@ -217,7 +217,7 @@ jobs:
             --user \
             --install \
             --ccache \
-            build-dir-ci \
+            build-dir \
             com.github.d3t0x.dotcfg-gui.yml
 
       - name: Verify installed files

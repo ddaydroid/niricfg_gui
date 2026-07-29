@@ -40,4 +40,3 @@ coverage/
 build-dir/
 .flatpak-builder/
 .flatpak/
-build-dir-ci/
